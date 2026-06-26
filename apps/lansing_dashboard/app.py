@@ -762,6 +762,7 @@ class ActuatorCard(QFrame):
         self.value = QLabel("not detected")
         self.value.setObjectName("ActuatorValue")
         self.runtime = QLabel("connect and detect")
+        self.runtime.setObjectName("ActuatorDetail")
 
         layout.addLayout(header)
         layout.addWidget(self.value)
@@ -1430,6 +1431,14 @@ QLabel#ActuatorValue {
     color: #1a1b1f;
     font-size: 16px;
     font-weight: 700;
+}
+QLabel#ActuatorDetail {
+    color: #4f5f70;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLabel#ActuatorDetail:disabled {
+    color: #5f6f80;
 }
 QLabel#Diagnosis {
     color: #5d6c7b;
