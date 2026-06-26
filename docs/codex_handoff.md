@@ -25,6 +25,269 @@ These were the commits created before handoff:
 
 If these hashes are not present on the work machine, pull or push the repos first.
 
+## 2026-06-26 Update
+
+This section records the follow-up decisions and implementation work from the later Lansing dashboard and firmware-support session. Keep this section current because it captures behavior that came from bench testing and UX iteration, not just the initial protocol design.
+
+Latest known repo commits after this session:
+
+- Electronics repo: `d46e9b1 Return all Lansing config values`
+- SDK repo: `452ed10 Improve Lansing dashboard Mac styling`
+
+Important SDK commit sequence:
+
+- `59cbbf8 Add Lansing dashboard app`
+- `b15859c Harden Lansing dashboard serial status handling`
+- `452ed10 Improve Lansing dashboard Mac styling`
+
+Important electronics commit sequence:
+
+- `70efc2e Add Lansing Codex handoff notes`
+- `d46e9b1 Return all Lansing config values`
+
+The SDK package was prepared/published as package `fluid-reality`, import package `fluid_reality`, with version `0.1.0` at the time of this update. A PyPI token was used from a local key file during the session, but do not record token contents in this handoff or in repo files.
+
+### Firmware Change: `CFG` With No Parameters
+
+The user requested that `CFG` with no parameters return all runtime configuration values. Current firmware behavior:
+
+```text
+CFG
+OK:MAX><milliseconds>,DIS><milliseconds>,SAFE>ON,DEBUG>OFF
+```
+
+`CFG` still accepts:
+
+- `CFG MAX`
+- `CFG MAX <milliseconds>`
+- `CFG DIS`
+- `CFG DIS <milliseconds>`
+- `CFG SAFE`
+- `CFG SAFE ON|OFF|1|0`
+- `CFG DEBUG`
+- `CFG DEBUG ON|OFF|1|0`
+
+`ER:CFG_PARAM_COUNT` now means more than two fields were sent. It should no longer be returned merely because `CFG` had no key.
+
+### Lansing Dashboard App
+
+The SDK now contains a desktop dashboard at:
+
+```text
+apps/lansing_dashboard/app.py
+apps/lansing_dashboard/README.md
+apps/lansing_dashboard/requirements.txt
+apps/lansing_dashboard/assets/
+```
+
+Run from the SDK root:
+
+```powershell
+python -m pip install -e .
+python -m pip install -r apps\lansing_dashboard\requirements.txt
+python apps\lansing_dashboard\app.py
+```
+
+The dashboard adds `src` to `sys.path`, so it can also run from a local checkout before package installation.
+
+Dashboard design decisions:
+
+- Use the Fluid Reality logo assets in `apps/lansing_dashboard/assets`.
+- Use the Fluid site-inspired palette: white surfaces, black ink, Fluid red, and blue active highlights.
+- Do not use a landing page or explanation screen; first screen is the actual operational dashboard.
+- The dashboard is a PySide6 app with a background worker thread for serial operations so long `INI`, `DIA`, recovery, and status polling do not block the UI.
+- Controls for board telemetry, actuators, and board actions must remain disabled until a serial connection is established. Pressing Disconnect disables them again.
+- Power supply on/off and output connected/disconnected use pill-style toggles in the metric cards.
+- The connect bar itself remains usable while disconnected.
+
+Mac styling decisions after user-provided screenshots:
+
+- Do not hardcode a Windows-only font in the stylesheet. The app uses Qt's system UI font via `QFontDatabase.systemFont(QFontDatabase.GeneralFont)`.
+- Use Qt `Fusion` style to make PySide widgets more predictable across Windows and macOS.
+- Keep disabled text readable on macOS. Explicit disabled colors are set for labels, buttons, combo boxes, and spin boxes.
+- Style `QComboBox QAbstractItemView` explicitly so macOS does not show a dark native dropdown popup against the light app.
+- Give the actuator scroll viewport and grid host explicit white backgrounds so card gaps do not render as dark gutters on macOS.
+- Avoid very heavy `font-weight: 800`; dashboard headline/value weights were softened to `700`.
+
+The ugly Mac screenshot was caused by a combination of macOS Qt palette/font differences: the Segoe UI fallback rendered too heavy, disabled widget text went nearly white, the combo popup inherited a dark palette, and the actuator grid/scroll backgrounds were not explicit.
+
+### Dashboard Actuator Grouping and Selection
+
+Actuators are shown in three groups:
+
+- Group 0: actuators `0..7`
+- Group 1: actuators `8..15`
+- Group 2: actuators `16..23`
+
+The first group is shown by default. The user changes groups with a combo box. The dashboard should not ask for an actuator number manually. Clicking an actuator card selects it, and all board actions apply to that selected actuator.
+
+Actuator status language is intentionally user-facing, not raw firmware-state language:
+
+- Default before detection: `N/A`
+- During detection: `Detecting`
+- Detected and acceptable: `Ready`
+- Missing actuator: `Not connected`
+- Excessive current delta: `Error`
+
+On disconnect, all actuator cards go back to `N/A`.
+
+### Auto Detection Behavior
+
+Auto detection is for the currently visible actuator group only.
+
+Trigger detection when:
+
+- a group is selected and the board is connected with PSU on and output connected
+- the PSU becomes on and the output becomes connected
+
+Detection procedure:
+
+1. Confirm PSU is on and output is connected.
+2. Stop square wave if it is running.
+3. Command all actuators in the group off.
+4. For each actuator in the group:
+   - immediately set that card to `Detecting`
+   - run firmware `DIA <actuator>`
+   - immediately update that one card as soon as the result is available
+5. Do not wait until the whole group finishes to update individual cards.
+
+Detection thresholds:
+
+- delta `< 0.1 mA`: `Not connected`
+- delta `> 3.0 mA`: `Error`
+- otherwise: `Ready`
+
+Delta is computed from baseline and forward current. During the session the not-connected threshold moved through `.05 mA` and settled at `.1 mA`; the error threshold settled at `3.0 mA`.
+
+The event log should be verbose during detection, including:
+
+- group number and actuator range
+- PSU/output state
+- voltage/current snapshot
+- thresholds
+- per-actuator off command result
+- per-actuator diagnostic start
+- baseline, forward, discharge, delta, and classification
+- final group summary
+
+Event-log messages are HTML-escaped because strings like `<0.10 mA` otherwise disappear when appended to `QTextEdit` as rich text.
+
+### Dashboard Action Availability
+
+The dashboard intentionally separates selectable from operable:
+
+- `N/A` cards may be selected, but actions stay disabled until detection classifies them.
+- `Ready` actuators can be initialized, diagnosed, recovered, and square-wave driven.
+- `Error` actuators can be diagnosed and recovered.
+- `Not connected` actuators cannot be operated.
+- Recovery should be available for working/Ready actuators as well as Error actuators.
+
+After recovery, the user must be able to run full `Diagnose` to reclassify the actuator from Error back to Ready if the current delta is acceptable.
+
+### Recovery Behavior
+
+Recovery is an intentional bench/debug operation using raw manual output:
+
+- It temporarily disables manual-output safety with `CFG SAFE OFF`.
+- It alternates the selected actuator between positive manual drive and negative manual drive.
+- It restores manual-output safety after recovery.
+- It reports current delta every second.
+- It reports final delta against baseline.
+
+Recovery defaults:
+
+- `50 V`
+- `60 s`
+
+Recovery voltage is user-configurable and scaled against measured PSU voltage:
+
+```text
+raw_value = int(255 * requested_recovery_voltage / measured_psu_voltage)
+```
+
+Clamp raw value to firmware output range. Example decision from the session:
+
+```text
+PSU reads 200 V
+user requests 100 V recovery
+raw value sent should be about 127
+```
+
+The recovery alternation sends approximately:
+
+```text
+OUT <actuator> <raw_value> 0
+OUT <actuator> 0 <raw_value>
+OUT <actuator> 0 0
+```
+
+Use recovery for both error-state and working actuators. Do not require an actuator to be in Error before recovery is available.
+
+### Square Wave Behavior
+
+The dashboard square wave is not a sine wave and not a raw `OUT` operation. It uses normal safe `ACT` writes:
+
+1. send `ACT <actuator> 255` for full forward drive
+2. wait 1 second
+3. send `ACT <actuator> 0`
+4. let firmware-managed discharge run
+5. wait for firmware debug confirmation before reactivating
+
+The debug confirmation used by the dashboard is:
+
+```text
+DBG:DISCHARGE_STOP,ACT>0
+```
+
+The actuator number changes per selected actuator.
+
+If `ACT_FAILED` happens because the actuator is still locked out during discharge, the dashboard should wait and keep watching debug/status rather than crashing. The session explicitly changed behavior away from simply retrying on a fixed timer; reactivation should be based on firmware debug messages that prove discharge stopped.
+
+The square wave runs indefinitely until the user presses Stop, All Off, disconnects, or closes the app.
+
+### Serial Timeout and Status Misalignment
+
+During bench use, detection timed out while waiting for `DIA`:
+
+```text
+Timed out waiting for firmware response
+Status refresh failed: 'PSU'
+```
+
+The root cause was that the dashboard opened the serial transport with a timeout that was too short for blocking diagnostics. After `DIA` timed out, the later firmware response remained in the serial buffer, so subsequent `STS` reads became misaligned and the SDK tried to parse a non-status response as status.
+
+Current dashboard mitigation:
+
+- `SERIAL_TIMEOUT_S = 5.0`
+- `Lansing(port, timeout=SERIAL_TIMEOUT_S)`
+
+Current SDK mitigation:
+
+- `Lansing.status()` validates required first-line `STS` fields.
+- If required fields are missing, it raises a `ProtocolError` that includes the raw `STS` response lines instead of surfacing a bare `KeyError` such as `'PSU'`.
+
+If a similar issue returns, inspect raw status lines first. Do not assume the board state is wrong until serial response alignment has been ruled out.
+
+### Dashboard Verification Used
+
+The following checks were used after dashboard changes:
+
+```powershell
+python -m compileall -q apps\lansing_dashboard\app.py
+python -m compileall -q apps\lansing_dashboard\app.py src\fluid_reality\boards\lansing.py
+python -m pytest tests\test_lansing.py
+```
+
+An offscreen PySide smoke test was also used to verify:
+
+- initial actuator state is `N/A`
+- detection can show `Detecting`
+- detected-good changes to `Ready`
+- disconnect resets cards to `N/A`
+- event log preserves `<0.10 mA`
+
+On this Windows machine, the offscreen Qt renderer can display square placeholder glyphs because of headless/offscreen font limitations. Do not confuse that with the macOS screenshot issue; the Mac issue was about real Qt palette/font fallback behavior.
+
 ## Hardware Model
 
 The Lansing board controls up to 24 actuators.
