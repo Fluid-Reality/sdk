@@ -18,7 +18,7 @@ SDK_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = SDK_ROOT / "src"
 APP_ROOT = Path(__file__).resolve().parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
-SERIAL_TIMEOUT_S = 5.0
+SERIAL_TIMEOUT_S = 45.0
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
@@ -36,10 +36,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QDoubleSpinBox,
+    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -82,6 +84,7 @@ class BoardWorker(QThread):
     connected_changed = Signal(bool, str)
     status_ready = Signal(dict)
     diagnosis_ready = Signal(dict)
+    initialization_progress = Signal(dict)
     recovery_ready = Signal(dict)
     recovery_progress = Signal(dict)
     health_ready = Signal(int, object)
@@ -219,12 +222,107 @@ class BoardWorker(QThread):
             self._last_status = time.monotonic()
 
     def _initialize_actuator(self, actuator: int) -> None:
-        self._ensure_actuator_available(actuator)
+        self._ensure_actuator_recoverable(actuator)
         board = self._require_board()
+        if self._square_actuators:
+            self._stop_square_wave()
+        stages = (25.0, 50.0, 100.0, 200.0)
+        stage_duration_s = 30.0
+        total_duration_s = stage_duration_s * len(stages)
+        phase_interval_s = 0.5
         self.busy_changed.emit(f"Initializing actuator {actuator}")
-        self.message.emit(f"Initializing actuator {actuator}", "info")
-        board.initialize_actuator(actuator)
+        self.message.emit(
+            f"Initializing actuator {actuator}: safety off, 1 Hz bipolar drive "
+            "at +/-25 V, +/-50 V, +/-100 V, +/-200 V, then diagnose.",
+            "warn",
+        )
+        supply_voltage = board.voltage()
+        if supply_voltage <= 0:
+            raise RuntimeError("Cannot initialize: measured PSU voltage is 0 V.")
+        start = time.monotonic()
+        next_report_second = -1
+        try:
+            board.safety(False)
+            for stage_index, target_voltage in enumerate(stages, start=1):
+                output_value = self._voltage_to_output(target_voltage, supply_voltage)
+                stage_start = time.monotonic()
+                next_phase = stage_start
+                phase = 0
+                self.message.emit(
+                    f"Initialize actuator {actuator}: stage {stage_index}/4 "
+                    f"+/-{target_voltage:.0f} V using raw {output_value}/255.",
+                    "info",
+                )
+                while True:
+                    now = time.monotonic()
+                    stage_elapsed_s = now - stage_start
+                    elapsed_s = now - start
+                    if stage_elapsed_s >= stage_duration_s:
+                        break
+
+                    if now >= next_phase:
+                        if phase % 2 == 0:
+                            board.set_manual_output(actuator, output_value, 0)
+                        else:
+                            board.set_manual_output(actuator, 0, output_value)
+                        phase += 1
+                        next_phase = now + phase_interval_s
+
+                    whole_second = int(elapsed_s)
+                    if whole_second > next_report_second:
+                        self.initialization_progress.emit(
+                            {
+                                "actuator": actuator,
+                                "elapsed_s": min(elapsed_s, total_duration_s),
+                                "total_s": total_duration_s,
+                                "stage_index": stage_index,
+                                "stage_count": len(stages),
+                                "stage_voltage": target_voltage,
+                                "output_value": output_value,
+                            }
+                        )
+                        next_report_second = whole_second
+                    time.sleep(0.05)
+            board.set_manual_output(actuator, 0, 0)
+        finally:
+            try:
+                board.set_manual_output(actuator, 0, 0)
+            finally:
+                board.safety(True)
+
+        self.initialization_progress.emit(
+            {
+                "actuator": actuator,
+                "elapsed_s": total_duration_s,
+                "total_s": total_duration_s,
+                "stage_index": len(stages),
+                "stage_count": len(stages),
+                "stage_voltage": stages[-1],
+                "output_value": self._voltage_to_output(stages[-1], supply_voltage),
+            }
+        )
+        self.message.emit(f"Initialization drive complete for actuator {actuator}; diagnosing.", "info")
+        result = board.diagnose_actuator(actuator)
+        health = self._health_from_currents(
+            result.baseline_ma,
+            result.forward_ma,
+            result.discharge_ma,
+        )
+        self._actuator_health[actuator] = health
+        self.health_ready.emit(actuator // 8, {actuator: health})
+        self.diagnosis_ready.emit(
+            {
+                "actuator": result.actuator,
+                "baseline_ma": result.baseline_ma,
+                "forward_ma": result.forward_ma,
+                "discharge_ma": result.discharge_ma,
+            }
+        )
         self.message.emit(f"Actuator {actuator} initialized", "ok")
+        self.message.emit(
+            f"Actuator {actuator} classified as {health['state']} after initialization.",
+            "ok" if health["state"] == "idle" else "warn",
+        )
         self.busy_changed.emit("")
         self._emit_status()
 
@@ -267,8 +365,7 @@ class BoardWorker(QThread):
         supply_voltage = board.voltage()
         if supply_voltage <= 0:
             raise RuntimeError("Cannot recover: measured PSU voltage is 0 V.")
-        ratio = min(target_voltage / supply_voltage, 1.0)
-        output_value = max(1, min(Lansing.max_output, int(Lansing.max_output * ratio)))
+        output_value = self._voltage_to_output(target_voltage, supply_voltage)
         self.busy_changed.emit(f"Recovering actuator {actuator}")
         self.message.emit(
             f"Recovering actuator {actuator} at +/-{target_voltage:.1f} V "
@@ -520,6 +617,11 @@ class BoardWorker(QThread):
         if health and health.get("state") == "disconnected":
             raise RuntimeError(f"Actuator {actuator} is not connected.")
 
+    @staticmethod
+    def _voltage_to_output(target_voltage: float, supply_voltage: float) -> int:
+        ratio = min(target_voltage / supply_voltage, 1.0)
+        return max(1, min(Lansing.max_output, int(Lansing.max_output * ratio)))
+
     def _service_square_wave(self) -> None:
         if self._board is None or not self._square_actuators:
             return
@@ -746,10 +848,12 @@ class ActuatorCard(QFrame):
         self._health: dict[str, Any] | None = None
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumWidth(180)
+        self.setFixedHeight(158)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(7)
+        layout.setContentsMargins(14, 12, 14, 10)
+        layout.setSpacing(6)
 
         header = QHBoxLayout()
         number = QLabel(f"{actuator:02d}")
@@ -766,6 +870,7 @@ class ActuatorCard(QFrame):
 
         layout.addLayout(header)
         layout.addWidget(self.value)
+        layout.addStretch()
         layout.addWidget(self.runtime)
 
     def mousePressEvent(self, event: Any) -> None:
@@ -875,6 +980,7 @@ class DashboardWindow(QMainWindow):
         self.worker.connected_changed.connect(self._on_connected_changed)
         self.worker.status_ready.connect(self._on_status_ready)
         self.worker.diagnosis_ready.connect(self._on_diagnosis_ready)
+        self.worker.initialization_progress.connect(self._on_initialization_progress)
         self.worker.recovery_ready.connect(self._on_recovery_ready)
         self.worker.recovery_progress.connect(self._on_recovery_progress)
         self.worker.health_ready.connect(self._on_health_ready)
@@ -943,7 +1049,7 @@ class DashboardWindow(QMainWindow):
         self.side_panel = self._build_side_panel()
         splitter.addWidget(self.actuator_panel)
         splitter.addWidget(self.side_panel)
-        splitter.setSizes([980, 360])
+        splitter.setSizes([900, 520])
         outer.addWidget(splitter, 1)
 
         self.setStyleSheet(APP_STYLES)
@@ -1040,35 +1146,57 @@ class DashboardWindow(QMainWindow):
 
         scroll.setWidget(grid_host)
         layout.addLayout(header)
+        layout.addWidget(self._build_board_controls_panel())
         layout.addWidget(scroll, 1)
         self._show_group(0)
         self._select_actuator(0)
         return panel
 
-    def _build_side_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("Panel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(14)
+    def _build_board_controls_panel(self) -> QWidget:
+        controls = QFrame()
+        controls.setObjectName("ControlsPanel")
+        layout = QVBoxLayout(controls)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(0)
 
-        actions_title = QLabel("Board Controls")
-        actions_title.setObjectName("SectionTitle")
+        tabs = QTabWidget()
+        tabs.setObjectName("ControlTabs")
 
-        target_group = QFrame()
-        target_group.setObjectName("Inset")
-        target_layout = QVBoxLayout(target_group)
-        target_layout.setContentsMargins(12, 12, 12, 12)
-        target_layout.setSpacing(10)
-        target_layout.addWidget(QLabel("Selected Actuator"))
-        target_row = QHBoxLayout()
-        self.selected_actuator_label = QLabel("Actuator 0")
-        self.selected_actuator_label.setObjectName("SelectedActuatorBadge")
+        init_tab = QWidget()
+        init_layout = QHBoxLayout(init_tab)
+        init_layout.setContentsMargins(10, 10, 10, 10)
+        init_layout.setSpacing(10)
         self.init_btn = QPushButton("Initialize")
-        self.diag_btn = QPushButton("Diagnose")
-        self.recover_btn = QPushButton("Recover")
         self.init_btn.clicked.connect(lambda: self.worker.enqueue("init", self._selected_actuator))
+        self.init_progress = QProgressBar()
+        self.init_progress.setRange(0, 120)
+        self.init_progress.setValue(0)
+        self.init_progress.setTextVisible(False)
+        self.init_progress.setObjectName("InitProgress")
+        self.init_elapsed_label = QLabel("Elapsed 0 / 120 s")
+        self.init_elapsed_label.setObjectName("Diagnosis")
+        init_layout.addWidget(self.init_btn)
+        init_layout.addWidget(self.init_progress, 1)
+        init_layout.addWidget(self.init_elapsed_label)
+        init_layout.addStretch()
+
+        diag_tab = QWidget()
+        diag_layout = QHBoxLayout(diag_tab)
+        diag_layout.setContentsMargins(10, 10, 10, 10)
+        diag_layout.setSpacing(10)
+        self.diag_btn = QPushButton("Diagnose")
         self.diag_btn.clicked.connect(lambda: self.worker.enqueue("diagnose", self._selected_actuator))
+        self.diagnosis_label = QLabel("No diagnosis yet")
+        self.diagnosis_label.setObjectName("Diagnosis")
+        self.diagnosis_label.setWordWrap(True)
+        diag_layout.addWidget(self.diag_btn)
+        diag_layout.addWidget(self.diagnosis_label, 1)
+
+        recover_tab = QWidget()
+        recover_layout = QHBoxLayout(recover_tab)
+        recover_layout.setContentsMargins(10, 10, 10, 10)
+        recover_layout.setSpacing(10)
+        self.recover_btn = QPushButton("Recover")
         self.recover_btn.clicked.connect(
             lambda: self.worker.enqueue(
                 "recover",
@@ -1077,55 +1205,54 @@ class DashboardWindow(QMainWindow):
                 self.recover_duration_spin.value(),
             )
         )
-        target_row.addWidget(self.selected_actuator_label)
-        target_row.addWidget(self.init_btn)
-        target_row.addWidget(self.diag_btn)
-        target_row.addWidget(self.recover_btn)
-
-        recovery_settings = QHBoxLayout()
-        recovery_settings.addWidget(QLabel("Recover V"))
+        recover_layout.addWidget(QLabel("Voltage"))
         self.recover_voltage_spin = QDoubleSpinBox()
         self.recover_voltage_spin.setRange(1.0, 500.0)
         self.recover_voltage_spin.setDecimals(1)
         self.recover_voltage_spin.setSingleStep(5.0)
         self.recover_voltage_spin.setValue(50.0)
         self.recover_voltage_spin.setSuffix(" V")
-        recovery_settings.addWidget(self.recover_voltage_spin)
-        recovery_settings.addWidget(QLabel("Duration"))
+        recover_layout.addWidget(self.recover_voltage_spin)
+        recover_layout.addWidget(QLabel("Duration"))
         self.recover_duration_spin = QSpinBox()
         self.recover_duration_spin.setRange(1, 300)
         self.recover_duration_spin.setValue(60)
         self.recover_duration_spin.setSuffix(" s")
-        recovery_settings.addWidget(self.recover_duration_spin)
+        recover_layout.addWidget(self.recover_duration_spin)
+        recover_layout.addWidget(self.recover_btn)
+        recover_layout.addStretch()
 
-        self.diagnosis_label = QLabel("No diagnosis yet")
-        self.diagnosis_label.setObjectName("Diagnosis")
-        self.diagnosis_label.setWordWrap(True)
-        target_layout.addLayout(target_row)
-        target_layout.addLayout(recovery_settings)
-        target_layout.addWidget(self.diagnosis_label)
-
-        wave_group = QFrame()
-        wave_group.setObjectName("Inset")
-        wave_layout = QVBoxLayout(wave_group)
-        wave_layout.setContentsMargins(12, 12, 12, 12)
-        wave_layout.setSpacing(8)
-        wave_layout.addWidget(QLabel("Square Wave"))
-        wave_row = QHBoxLayout()
+        wave_tab = QWidget()
+        wave_layout = QHBoxLayout(wave_tab)
+        wave_layout.setContentsMargins(10, 10, 10, 10)
+        wave_layout.setSpacing(10)
         self.square_target_btn = QPushButton("Start Selected")
         square_stop = QPushButton("Stop")
         all_off = QPushButton("All Off")
         self.square_target_btn.clicked.connect(lambda: self.worker.enqueue("square_start", [self._selected_actuator]))
         square_stop.clicked.connect(lambda: self.worker.enqueue("square_stop"))
         all_off.clicked.connect(lambda: self.worker.enqueue("all_off"))
-        wave_row.addWidget(self.square_target_btn)
-        wave_stop_row = QHBoxLayout()
-        wave_stop_row.addWidget(square_stop)
-        wave_stop_row.addWidget(all_off)
         self.square_pill = StatusPill("Stopped", "neutral")
-        wave_layout.addLayout(wave_row)
-        wave_layout.addLayout(wave_stop_row)
+        wave_layout.addWidget(self.square_target_btn)
+        wave_layout.addWidget(square_stop)
+        wave_layout.addWidget(all_off)
         wave_layout.addWidget(self.square_pill)
+        wave_layout.addStretch()
+
+        tabs.addTab(init_tab, "Initialize")
+        tabs.addTab(diag_tab, "Diagnose")
+        tabs.addTab(recover_tab, "Recover")
+        tabs.addTab(wave_tab, "Square Wave")
+        layout.addWidget(tabs)
+
+        return controls
+
+    def _build_side_panel(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
         log_title = QLabel("Event Log")
         log_title.setObjectName("SectionTitle")
@@ -1133,9 +1260,6 @@ class DashboardWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(160)
 
-        layout.addWidget(actions_title)
-        layout.addWidget(target_group)
-        layout.addWidget(wave_group)
         layout.addWidget(log_title)
         layout.addWidget(self.log, 1)
         return panel
@@ -1186,6 +1310,9 @@ class DashboardWindow(QMainWindow):
             self.voltage_card.set_value("-", "V")
             self.current_card.set_value("-", "mA")
             self.config_card.set_value("-", "")
+            if hasattr(self, "init_progress"):
+                self.init_progress.setValue(0)
+                self.init_elapsed_label.setText("Elapsed 0 / 120 s")
             for card in self._cards:
                 card.reset_detection()
 
@@ -1232,6 +1359,22 @@ class DashboardWindow(QMainWindow):
         self.diagnosis_label.setText(
             "Actuator {actuator}: baseline {baseline_ma:.2f} mA, "
             "forward {forward_ma:.2f} mA, discharge {discharge_ma:.2f} mA".format(**result)
+        )
+
+    def _on_initialization_progress(self, result: dict[str, Any]) -> None:
+        elapsed_s = int(result["elapsed_s"])
+        total_s = int(result["total_s"])
+        self.init_progress.setRange(0, total_s)
+        self.init_progress.setValue(elapsed_s)
+        self.init_elapsed_label.setText(
+            "Elapsed {elapsed_s} / {total_s} s - stage {stage_index}/{stage_count}, "
+            "+/-{stage_voltage:.0f} V".format(
+                elapsed_s=elapsed_s,
+                total_s=total_s,
+                stage_index=int(result["stage_index"]),
+                stage_count=int(result["stage_count"]),
+                stage_voltage=float(result["stage_voltage"]),
+            )
         )
 
     def _on_recovery_ready(self, result: dict[str, Any]) -> None:
@@ -1318,7 +1461,7 @@ class DashboardWindow(QMainWindow):
         available = state == "idle"
         error = state == "error"
         connected = state in {"idle", "error"}
-        self.init_btn.setEnabled(available)
+        self.init_btn.setEnabled(available or error)
         self.diag_btn.setEnabled(available or error)
         self.recover_btn.setEnabled(connected)
         self.square_target_btn.setEnabled(available)
@@ -1366,6 +1509,47 @@ QFrame#MetricCard {
     border: 1px solid #dedfe3;
     border-radius: 8px;
 }
+QFrame#ControlsPanel {
+    background: #ffffff;
+    border: 1px solid #dedfe3;
+    border-radius: 8px;
+}
+QTabWidget#ControlTabs::pane {
+    background: #ffffff;
+    border: 1px solid #dcddeb;
+    border-radius: 8px;
+    top: -1px;
+}
+QTabWidget#ControlTabs QTabBar::tab {
+    background: #f3f4f7;
+    color: #4f5f70;
+    border: 1px solid #dcddeb;
+    border-bottom-color: #dcddeb;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    padding: 7px 14px;
+    margin-right: 4px;
+    font-weight: 700;
+}
+QTabWidget#ControlTabs QTabBar::tab:selected {
+    background: #0050bd;
+    color: #ffffff;
+    border-color: #0050bd;
+}
+QTabWidget#ControlTabs QTabBar::tab:hover:!selected {
+    background: #eaf2ff;
+    color: #1a1b1f;
+}
+QProgressBar#InitProgress {
+    background: #eef1f6;
+    border: 1px solid #d6dae3;
+    border-radius: 7px;
+    min-height: 16px;
+}
+QProgressBar#InitProgress::chunk {
+    background: #0050bd;
+    border-radius: 6px;
+}
 QFrame#Inset {
     background: #fafafa;
     border: 1px solid #dcddeb;
@@ -1374,6 +1558,11 @@ QFrame#Inset {
 QLabel#SectionTitle {
     color: #1a1b1f;
     font-size: 17px;
+    font-weight: 700;
+}
+QLabel#ToolTitle {
+    color: #1a1b1f;
+    font-size: 13px;
     font-weight: 700;
 }
 QLabel#MetricTitle {
