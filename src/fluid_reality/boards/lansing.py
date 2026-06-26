@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from logging import Logger
 from typing import Callable, Literal
 
-from ..protocol import LineTransport, Response
+from ..protocol import LineTransport, ProtocolError, Response
 from ..transport import SerialTransport
 from .base import Board
 from .lansing_errors import LANSING_ERROR_INFO
@@ -303,6 +303,24 @@ class Lansing(Board):
     def status(self) -> dict[str, object]:
         responses = self.raw_command("STS", ok_lines=7)
         summary = responses[0].fields
+        required_summary_fields = {
+            "PSU",
+            "PSC",
+            "VLT",
+            "CUR",
+            "CFG_MAX",
+            "CFG_DIS",
+            "SAFE",
+            "DEBUG",
+            "STREAM",
+        }
+        missing_summary_fields = required_summary_fields.difference(summary)
+        if missing_summary_fields:
+            raw_lines = " | ".join(response.raw for response in responses)
+            missing = ", ".join(sorted(missing_summary_fields))
+            raise ProtocolError(
+                f"STS response missing fields {missing}; received: {raw_lines}"
+            )
         output_fields = self._fields_from_payload(
             responses[2].payload.removeprefix("OUT_VALUES>")
         )
