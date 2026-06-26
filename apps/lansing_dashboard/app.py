@@ -23,7 +23,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from PySide6.QtCore import QSize, QThread, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractButton,
@@ -1021,9 +1021,12 @@ class DashboardWindow(QMainWindow):
         header.addWidget(self.group_combo)
 
         scroll = QScrollArea()
+        scroll.setObjectName("ActuatorScroll")
+        scroll.viewport().setObjectName("ActuatorViewport")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         grid_host = QWidget()
+        grid_host.setObjectName("ActuatorGridHost")
         grid = QGridLayout(grid_host)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(10)
@@ -1335,8 +1338,13 @@ APP_STYLES = """
 QWidget#Root {
     background: #f7f7fc;
     color: #1a1b1f;
-    font-family: "Segoe UI", Arial, sans-serif;
     font-size: 13px;
+}
+QWidget:disabled {
+    color: #7a8797;
+}
+QLabel:disabled {
+    color: #7a8797;
 }
 QLabel#Logo {
     background: transparent;
@@ -1344,7 +1352,7 @@ QLabel#Logo {
 QLabel#AppTitle {
     color: #1a1b1f;
     font-size: 28px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#AppSubtitle {
     color: #5d6c7b;
@@ -1365,7 +1373,7 @@ QFrame#Inset {
 QLabel#SectionTitle {
     color: #1a1b1f;
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#MetricTitle {
     color: #5d6c7b;
@@ -1375,7 +1383,7 @@ QLabel#MetricTitle {
 QLabel#MetricValue {
     color: #1a1b1f;
     font-size: 22px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#MetricUnit {
     color: #5d6c7b;
@@ -1416,12 +1424,12 @@ QFrame#ActuatorCard[selected="true"] {
 QLabel#ActuatorNumber {
     color: #1a1b1f;
     font-size: 20px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#ActuatorValue {
     color: #1a1b1f;
     font-size: 16px;
-    font-weight: 800;
+    font-weight: 700;
 }
 QLabel#Diagnosis {
     color: #5d6c7b;
@@ -1432,8 +1440,13 @@ QLabel#SelectedActuatorBadge {
     border: 1px solid #0050bd;
     border-radius: 7px;
     padding: 9px 14px;
-    font-weight: 800;
+    font-weight: 700;
     min-width: 96px;
+}
+QLabel#SelectedActuatorBadge:disabled {
+    color: #ffffff;
+    background: #8fb6ec;
+    border-color: #8fb6ec;
 }
 QLabel[kind="neutral"] {
     color: #1a1b1f;
@@ -1479,6 +1492,11 @@ QPushButton:pressed {
     background: #721012;
     border-color: #721012;
 }
+QPushButton:disabled {
+    background: #e6e8ee;
+    color: #7a8797;
+    border-color: #d6dae3;
+}
 QComboBox,
 QSpinBox,
 QDoubleSpinBox {
@@ -1488,6 +1506,23 @@ QDoubleSpinBox {
     border-radius: 7px;
     padding: 7px 9px;
 }
+QComboBox:disabled,
+QSpinBox:disabled,
+QDoubleSpinBox:disabled {
+    background: #f3f4f7;
+    color: #7a8797;
+    border-color: #d6dae3;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #1a1b1f;
+    border: 1px solid #c8c8c8;
+    border-radius: 7px;
+    padding: 4px;
+    selection-background-color: #eaf2ff;
+    selection-color: #1a1b1f;
+    outline: 0;
+}
 QTextEdit {
     background: #1a1b1f;
     color: #ffffff;
@@ -1495,15 +1530,23 @@ QTextEdit {
     border-radius: 8px;
     padding: 8px;
 }
-QScrollArea {
-    background: transparent;
+QScrollArea#ActuatorScroll,
+QWidget#ActuatorViewport {
+    background: #ffffff;
+    border: 0;
+}
+QWidget#ActuatorGridHost {
+    background: #ffffff;
 }
 """
 
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setFont(QFont("Segoe UI", 10))
+    app.setStyle("Fusion")
+    font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+    font.setPointSize(10)
+    app.setFont(font)
     window = DashboardWindow()
     window.show()
     return app.exec()
