@@ -164,3 +164,35 @@ off. That is expected behavior.
 Wait for discharge to finish before starting the next pulse or interpreting the
 actuator as idle. The SDK and firmware use this discharge phase to return the
 actuator safely toward neutral.
+
+## Dashboard
+
+The repository includes a desktop dashboard for connecting to a Lansing board,
+turning the power supply and output connection on or off, viewing voltage and
+current, detecting actuator state, initializing actuators, diagnosing actuators,
+running recovery, and starting square-wave output.
+
+See [apps/lansing_dashboard/README.md](apps/lansing_dashboard/README.md) for
+installation and usage instructions.
+
+## Examples
+
+Example scripts are available in [examples](examples):
+
+- [01_basic_actuator_current.py](examples/01_basic_actuator_current.py):
+  power the board, connect the output, detect one actuator, pulse it, and read
+  current.
+- [02_initialize_and_diagnose.py](examples/02_initialize_and_diagnose.py):
+  detect an actuator, initialize it when needed, and report diagnosis results.
+- [03_stream_sine.py](examples/03_stream_sine.py):
+  stream a sine waveform to one actuator.
+- [04_debug_logging.py](examples/04_debug_logging.py):
+  enable SDK and firmware debug output and save it to a log file.
+- [05_status_snapshot.py](examples/05_status_snapshot.py):
+  print a full board status snapshot.
+- [06_manual_output_bench_test.py](examples/06_manual_output_bench_test.py):
+  run direct positive/negative manual-output bench commands.
+- [07_error_handling.py](examples/07_error_handling.py):
+  show how to catch SDK exceptions and print recovery guidance.
+- [08_actuator_pulse_until_key.py](examples/08_actuator_pulse_until_key.py):
+  repeatedly pulse one actuator until a key is pressed.

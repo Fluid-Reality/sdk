@@ -83,12 +83,11 @@ apps/lansing_dashboard/assets/
 Run from the SDK root:
 
 ```powershell
-python -m pip install -e .
 python -m pip install -r apps\lansing_dashboard\requirements.txt
 python apps\lansing_dashboard\app.py
 ```
 
-The dashboard adds `src` to `sys.path`, so it can also run from a local checkout before package installation.
+The dashboard requirements install the published `fluid-reality` package from PyPI. It should use that installed package rather than an editable SDK checkout.
 
 Dashboard design decisions:
 

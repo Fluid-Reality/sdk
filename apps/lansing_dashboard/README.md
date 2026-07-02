@@ -4,6 +4,9 @@ Desktop dashboard for the Fluid Reality Lansing board.
 
 The UI uses the Fluid Reality logo in `assets/fluid_reality_logo.png` and a palette aligned with the public site: white surfaces, black ink, Fluid red accents, and blue active-state highlights.
 
+For the complete operator guide, see the
+[Lansing Development Kit Dashboard User Manual](docs/lansing_dashboard_manual.md).
+
 ## Features
 
 - Connect to a Lansing board over a serial COM port.
@@ -38,7 +41,6 @@ cd sdk/apps/lansing_dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python app.py
 ```
@@ -51,12 +53,13 @@ cd sdk\apps\lansing_dashboard
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-The app also adds the SDK `src` folder to `sys.path`, so it can run during local development before the package is installed.
+The dashboard requirements install the published `fluid-reality` package from
+PyPI. The dashboard should use that installed package rather than an editable
+SDK checkout.
 
 ## Notes
 

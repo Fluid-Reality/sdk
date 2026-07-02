@@ -1,4 +1,4 @@
-# Lansing Development Kit User Manual
+# Lansing Development Kit Dashboard User Manual
 
 Fluid Reality Lansing Dashboard
 
@@ -24,7 +24,6 @@ cd sdk/apps/lansing_dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python app.py
 ```
@@ -37,7 +36,6 @@ cd sdk\apps\lansing_dashboard
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python app.py
 ```
@@ -373,59 +371,3 @@ The Lansing board can operate with high voltage. Only trained users should opera
 - Use `Stop` or `All Off` if output should stop immediately.
 - Disconnect output and turn off the power supply before handling hardware.
 - Treat error-state actuators as requiring review before normal operation.
-
-## Software Development
-
-The Lansing Development Kit includes the Fluid Reality Python SDK, dashboard application, and example scripts for building custom software around Lansing hardware.
-
-SDK repository:
-
-- GitHub: https://github.com/Fluid-Reality/sdk
-- PyPI package: `fluid-reality`
-- Python import package: `fluid_reality`
-
-Install the SDK from PyPI for application development:
-
-```powershell
-python -m pip install fluid-reality
-```
-
-Install from a local checkout when developing against the SDK source:
-
-```powershell
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk
-python -m pip install -e .
-```
-
-Example scripts are provided in the repository [examples](../examples) directory:
-
-- [01_basic_actuator_current.py](../examples/01_basic_actuator_current.py): turn on power, connect output, activate one actuator, and read current.
-- [02_initialize_and_diagnose.py](../examples/02_initialize_and_diagnose.py): initialize and diagnose one actuator.
-- [03_stream_sine.py](../examples/03_stream_sine.py): stream a sine wave to one actuator.
-- [04_debug_logging.py](../examples/04_debug_logging.py): collect board diagnostic output through Python logging.
-- [05_status_snapshot.py](../examples/05_status_snapshot.py): print a full board-state dictionary.
-- [06_manual_output_bench_test.py](../examples/06_manual_output_bench_test.py): run direct bench-control output.
-- [07_error_handling.py](../examples/07_error_handling.py): catch SDK exceptions and print recovery guidance.
-- [08_actuator_pulse_until_key.py](../examples/08_actuator_pulse_until_key.py): repeatedly pulse an actuator until a key is pressed.
-
-Run an example from a local checkout by passing the serial port:
-
-```powershell
-python examples\05_status_snapshot.py COM5
-```
-
-For custom applications, start with the `Lansing` wrapper from the SDK:
-
-```python
-from fluid_reality import Lansing
-
-with Lansing("COM5") as board:
-    print(board.status())
-    board.power_supply(True)
-    board.connect_power(True)
-    print(board.voltage())
-    print(board.current())
-```
-
-Developers should use the dashboard as the reference user interface for expected operator workflows, actuator health states, recovery behavior, and event-log language.

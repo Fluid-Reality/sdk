@@ -1,2 +1,2 @@
+fluid-reality>=0.1.2
 PySide6>=6.6
-pyserial>=3.5

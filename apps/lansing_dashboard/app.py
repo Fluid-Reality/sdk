@@ -14,12 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-SDK_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = SDK_ROOT / "src"
 APP_ROOT = Path(__file__).resolve().parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
 
 from PySide6.QtCore import QSize, QThread, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPixmap
