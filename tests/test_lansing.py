@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from fluid_reality import FirmwareError, Lansing
+from fluid_reality import ActuatorState, FirmwareError, Lansing
 
 
 class FakeTransport:
@@ -40,6 +40,7 @@ def test_lansing_skips_debug_lines_before_result():
     transport = FakeTransport(["DBG:COMMAND>ACT,ACTUATOR>1,VALUE>200", "OK:ACT"])
     debug_lines = []
     board = Lansing(transport=transport, debug_callback=debug_lines.append)
+    board._actuator_states[1] = ActuatorState.READY
 
     board.set_actuator(1, 200)
 
@@ -51,6 +52,7 @@ def test_lansing_skips_debug_lines_before_result():
 def test_lansing_raises_firmware_errors():
     transport = FakeTransport(["ER:ACT_PSU_OFF"])
     board = Lansing(transport=transport)
+    board._actuator_states[1] = ActuatorState.READY
 
     with pytest.raises(FirmwareError) as error:
         board.set_actuator(1, 200)
@@ -183,6 +185,88 @@ def test_lansing_logs_debug_lines_when_requested(caplog):
     assert "DBG:COMMAND>CUR" in caplog.text
 
 
+def test_lansing_debug_out_defaults_to_disabled(capsys):
+    transport = FakeTransport(["OK:12.34"])
+    board = Lansing(transport=transport)
+
+    assert board.current() == 12.34
+
+    assert capsys.readouterr().out == ""
+
+
+def test_lansing_debug_out_can_write_to_print(capsys):
+    transport = FakeTransport(["OK:12.34"])
+    board = Lansing(transport=transport)
+    board.set_debug_out(print)
+
+    assert board.current() == 12.34
+
+    output = capsys.readouterr().out
+    assert "Lansing | current" in output
+    assert "protocol | command.write" in output
+    assert "CUR" in output
+
+
+def test_lansing_debug_out_can_write_to_file(tmp_path):
+    path = tmp_path / "board-debug.log"
+    transport = FakeTransport(["OK:12.34"])
+    board = Lansing(transport=transport)
+    board.set_debug_out(path)
+
+    assert board.current() == 12.34
+    board.close()
+
+    output = path.read_text(encoding="utf-8")
+    assert "Lansing | current" in output
+    assert "value_ma=12.34" in output
+
+
+def test_lansing_debug_out_can_write_to_file_handler(tmp_path):
+    path = tmp_path / "board-debug.log"
+    transport = FakeTransport(["OK:12.34"])
+    board = Lansing(transport=transport)
+
+    with path.open("w", encoding="utf-8") as handle:
+        board.set_debug_out(handle)
+        assert board.current() == 12.34
+
+    output = path.read_text(encoding="utf-8")
+    assert "Lansing | current" in output
+    assert "value_ma=12.34" in output
+
+
+def test_lansing_debug_out_rejects_string_paths():
+    board = Lansing(transport=FakeTransport())
+
+    with pytest.raises(TypeError, match="Path"):
+        board.set_debug_out("board-debug.log")
+
+
+def test_lansing_debug_out_can_use_callback():
+    lines = []
+    transport = FakeTransport(["OK:12.34"])
+    board = Lansing(transport=transport)
+    board.set_debug_out(lines.append)
+
+    assert board.current() == 12.34
+
+    assert any("Lansing | current" in line for line in lines)
+    assert any("protocol | response.ok" in line for line in lines)
+
+
+def test_lansing_debug_out_can_be_disabled_after_enabled(capsys):
+    transport = FakeTransport(["OK:12.34", "OK:1.23"])
+    board = Lansing(transport=transport)
+    board.set_debug_out(print)
+    assert board.current() == 12.34
+    board.set_debug_out(None)
+    assert board.current() == 1.23
+
+    output = capsys.readouterr().out
+    assert "value_ma=12.34" in output
+    assert "value_ma=1.23" not in output
+
+
 def test_lansing_typed_config_helpers():
     transport = FakeTransport(
         [
@@ -216,4 +300,99 @@ def test_lansing_typed_config_helpers():
         "CFG SAFE OFF",
         "CFG DEBUG",
         "CFG DEBUG ON",
+    ]
+
+
+def test_lansing_actuators_start_unknown():
+    board = Lansing(transport=FakeTransport())
+
+    assert board.actuator_state(0) is ActuatorState.UNKNOWN
+    assert board.actuator_states == (ActuatorState.UNKNOWN,) * Lansing.actuator_count
+
+
+def test_lansing_set_actuator_requires_ready_state():
+    transport = FakeTransport()
+    board = Lansing(transport=transport)
+
+    with pytest.raises(RuntimeError, match="Unknown"):
+        board.set_actuator(0, 255)
+
+    assert transport.writes == []
+
+
+def test_lansing_detect_marks_actuator_ready():
+    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>0,BASE>0.86,FWD>1.18,DIS>0.91"])
+    board = Lansing(transport=transport)
+
+    assert board.detect(0) is ActuatorState.READY
+
+    detection = board.last_detection(0)
+    assert detection is not None
+    assert detection.state is ActuatorState.READY
+    assert detection.delta_ma == 0.32
+    assert board.actuator_state(0) is ActuatorState.READY
+    assert transport.writes == [
+        "ACT 0 0",
+        "ACT 1 0",
+        "ACT 2 0",
+        "ACT 3 0",
+        "ACT 4 0",
+        "ACT 5 0",
+        "ACT 6 0",
+        "ACT 7 0",
+        "DIA 0",
+    ]
+
+
+def test_lansing_detect_marks_actuator_not_connected():
+    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>3,BASE>0.86,FWD>0.91,DIS>0.90"])
+    board = Lansing(transport=transport)
+
+    assert board.detect(3) is ActuatorState.NOT_CONNECTED
+    assert board.actuator_state(3) is ActuatorState.NOT_CONNECTED
+
+
+def test_lansing_detect_marks_actuator_error():
+    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>4,BASE>0.88,FWD>4.42,DIS>1.16"])
+    board = Lansing(transport=transport)
+
+    assert board.detect(4) is ActuatorState.ERROR
+    assert board.actuator_state(4) is ActuatorState.ERROR
+
+
+def test_lansing_initialize_requires_detection_first():
+    board = Lansing(transport=FakeTransport())
+
+    with pytest.raises(RuntimeError, match="run detect"):
+        board.initialize(0)
+
+
+def test_lansing_initialize_runs_dashboard_sequence_and_returns_state(monkeypatch):
+    transport = FakeTransport(
+        [
+            "OK:217.87",
+            "OK:CFG_SAFE",
+            "OK:OUT",
+            "OK:OUT",
+            "OK:CFG_SAFE",
+            "OK:ACT>4,BASE>0.88,FWD>1.12,DIS>0.95",
+        ]
+    )
+    board = Lansing(transport=transport)
+    board._actuator_states[4] = ActuatorState.ERROR
+    board.initialization_stage_duration_s = 0.0
+    progress = []
+
+    state = board.initialize(4, progress_callback=progress.append)
+
+    assert state is ActuatorState.READY
+    assert board.actuator_state(4) is ActuatorState.READY
+    assert progress[-1]["elapsed_s"] == 0.0
+    assert transport.writes == [
+        "VLT",
+        "CFG SAFE OFF",
+        "OUT 4 0 0",
+        "OUT 4 0 0",
+        "CFG SAFE ON",
+        "DIA 4",
     ]

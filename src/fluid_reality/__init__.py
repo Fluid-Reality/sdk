@@ -1,11 +1,20 @@
 """Fluid Reality Python SDK."""
 
 from .boards import Lansing
-from .boards.lansing import Diagnosis, LansingConfig, LansingVersion, ManualOutput
+from .boards.lansing import (
+    ActuatorDetection,
+    ActuatorState,
+    Diagnosis,
+    LansingConfig,
+    LansingVersion,
+    ManualOutput,
+)
 from .errors import ErrorInfo, FirmwareError, FluidRealityError, ProtocolError, TransportError
 
 __all__ = [
     "Diagnosis",
+    "ActuatorDetection",
+    "ActuatorState",
     "ErrorInfo",
     "FirmwareError",
     "FluidRealityError",

@@ -12,7 +12,7 @@ import argparse
 import sys
 import time
 
-from fluid_reality import Lansing
+from fluid_reality import ActuatorState, Lansing
 
 
 def key_pressed() -> bool:
@@ -59,6 +59,9 @@ def main() -> None:
         board.force_text_mode()
         board.psu_on()
         board.psc_on()
+        state = board.detect(args.actuator)
+        if state is not ActuatorState.READY:
+            raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
 
         cycle = 0
         while not key_pressed():
@@ -71,7 +74,7 @@ def main() -> None:
             board.set_actuator(args.actuator, 0)
             wait_for_discharge(board, args.actuator, args.rest_s)
 
-        board.set_actuator(args.actuator, 0)
+        board.all_actuators_off()
         wait_for_discharge(board, args.actuator, args.rest_s)
         print("stopped")
 

@@ -1,5 +1,21 @@
 """Board wrappers provided by the Fluid Reality SDK."""
 
-from .lansing import Diagnosis, Lansing, LansingConfig, LansingVersion, ManualOutput
+from .lansing import (
+    ActuatorDetection,
+    ActuatorState,
+    Diagnosis,
+    Lansing,
+    LansingConfig,
+    LansingVersion,
+    ManualOutput,
+)
 
-__all__ = ["Diagnosis", "Lansing", "LansingConfig", "LansingVersion", "ManualOutput"]
+__all__ = [
+    "ActuatorDetection",
+    "ActuatorState",
+    "Diagnosis",
+    "Lansing",
+    "LansingConfig",
+    "LansingVersion",
+    "ManualOutput",
+]

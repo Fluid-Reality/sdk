@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
     QFrame,
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -169,12 +170,16 @@ class BoardWorker(QThread):
         self._close_board()
         self.busy_changed.emit("Connecting")
         self._board = Lansing(port, timeout=SERIAL_TIMEOUT_S)
+        self._board.set_debug_out(self._emit_debug)
         self._board.force_text_mode()
         version = self._board.firmware_version()
         self.connected_changed.emit(True, f"{port} - {version.firmware} {version.version}")
         self.message.emit(f"Connected to {version.firmware} firmware {version.version}", "ok")
         self.busy_changed.emit("")
         self._emit_status()
+
+    def _emit_debug(self, line: str) -> None:
+        self.message.emit(line, "debug")
 
     def _disconnect(self) -> None:
         self._stop_square_wave()
@@ -226,96 +231,31 @@ class BoardWorker(QThread):
         board = self._require_board()
         if self._square_actuators:
             self._stop_square_wave()
-        stages = (25.0, 50.0, 100.0, 200.0)
-        stage_duration_s = 30.0
-        total_duration_s = stage_duration_s * len(stages)
-        phase_interval_s = 0.5
         self.busy_changed.emit(f"Initializing actuator {actuator}")
         self.message.emit(
             f"Initializing actuator {actuator}: safety off, 1 Hz bipolar drive "
             "at +/-25 V, +/-50 V, +/-100 V, +/-200 V, then diagnose.",
             "warn",
         )
-        supply_voltage = board.voltage()
-        if supply_voltage <= 0:
-            raise RuntimeError("Cannot initialize: measured PSU voltage is 0 V.")
-        start = time.monotonic()
-        next_report_second = -1
-        try:
-            board.safety(False)
-            for stage_index, target_voltage in enumerate(stages, start=1):
-                output_value = self._voltage_to_output(target_voltage, supply_voltage)
-                stage_start = time.monotonic()
-                next_phase = stage_start
-                phase = 0
-                self.message.emit(
-                    f"Initialize actuator {actuator}: stage {stage_index}/4 "
-                    f"+/-{target_voltage:.0f} V using raw {output_value}/255.",
-                    "info",
-                )
-                while True:
-                    now = time.monotonic()
-                    stage_elapsed_s = now - stage_start
-                    elapsed_s = now - start
-                    if stage_elapsed_s >= stage_duration_s:
-                        break
-
-                    if now >= next_phase:
-                        if phase % 2 == 0:
-                            board.set_manual_output(actuator, output_value, 0)
-                        else:
-                            board.set_manual_output(actuator, 0, output_value)
-                        phase += 1
-                        next_phase = now + phase_interval_s
-
-                    whole_second = int(elapsed_s)
-                    if whole_second > next_report_second:
-                        self.initialization_progress.emit(
-                            {
-                                "actuator": actuator,
-                                "elapsed_s": min(elapsed_s, total_duration_s),
-                                "total_s": total_duration_s,
-                                "stage_index": stage_index,
-                                "stage_count": len(stages),
-                                "stage_voltage": target_voltage,
-                                "output_value": output_value,
-                            }
-                        )
-                        next_report_second = whole_second
-                    time.sleep(0.05)
-            board.set_manual_output(actuator, 0, 0)
-        finally:
-            try:
-                board.set_manual_output(actuator, 0, 0)
-            finally:
-                board.safety(True)
-
-        self.initialization_progress.emit(
-            {
-                "actuator": actuator,
-                "elapsed_s": total_duration_s,
-                "total_s": total_duration_s,
-                "stage_index": len(stages),
-                "stage_count": len(stages),
-                "stage_voltage": stages[-1],
-                "output_value": self._voltage_to_output(stages[-1], supply_voltage),
-            }
+        state = board.initialize(
+            actuator,
+            progress_callback=self.initialization_progress.emit,
         )
+        detection = board.last_detection(actuator)
+        if detection is None:
+            raise RuntimeError(
+                f"Initialization completed with state {state.value}, but no diagnosis was recorded."
+            )
         self.message.emit(f"Initialization drive complete for actuator {actuator}; diagnosing.", "info")
-        result = board.diagnose_actuator(actuator)
-        health = self._health_from_currents(
-            result.baseline_ma,
-            result.forward_ma,
-            result.discharge_ma,
-        )
+        health = self._health_from_detection(detection)
         self._actuator_health[actuator] = health
         self.health_ready.emit(actuator // 8, {actuator: health})
         self.diagnosis_ready.emit(
             {
-                "actuator": result.actuator,
-                "baseline_ma": result.baseline_ma,
-                "forward_ma": result.forward_ma,
-                "discharge_ma": result.discharge_ma,
+                "actuator": detection.actuator,
+                "baseline_ma": detection.baseline_ma,
+                "forward_ma": detection.forward_ma,
+                "discharge_ma": detection.discharge_ma,
             }
         )
         self.message.emit(f"Actuator {actuator} initialized", "ok")
@@ -332,11 +272,8 @@ class BoardWorker(QThread):
         self.busy_changed.emit(f"Diagnosing actuator {actuator}")
         self.message.emit(f"Diagnosing actuator {actuator}", "info")
         result = board.diagnose_actuator(actuator)
-        health = self._health_from_currents(
-            result.baseline_ma,
-            result.forward_ma,
-            result.discharge_ma,
-        )
+        detection = board.classify_diagnosis(result)
+        health = self._health_from_detection(detection)
         self._actuator_health[actuator] = health
         self.health_ready.emit(actuator // 8, {actuator: health})
         self.diagnosis_ready.emit(
@@ -476,35 +413,22 @@ class BoardWorker(QThread):
         if self._square_actuators:
             self._stop_square_wave()
 
-        self.message.emit(f"Detection group {group}: commanding all actuators off.", "info")
-        for actuator in actuators:
-            try:
-                board.set_actuator(actuator, 0)
-                self.message.emit(f"Detection actuator {actuator}: off command sent.", "info")
-            except FirmwareError as exc:
-                if exc.code != "ACT_FAILED":
-                    raise
-                self.message.emit(
-                    f"Detection actuator {actuator}: off command refused during discharge lockout.",
-                    "warn",
-                )
-
         results: dict[int, dict[str, Any]] = {}
         for actuator in actuators:
             self.health_ready.emit(group, {actuator: {"state": "detecting"}})
-            self.message.emit(f"Detection actuator {actuator}: running diagnostic.", "info")
-            result = board.diagnose_actuator(actuator)
-            entry = self._health_from_currents(
-                result.baseline_ma,
-                result.forward_ma,
-                result.discharge_ma,
+            self.message.emit(
+                f"Detection actuator {actuator}: running SDK detect "
+                "(group off, diagnostic, state update).",
+                "info",
             )
+            detection = board.detect_actuator(actuator)
+            entry = self._health_from_detection(detection)
             results[actuator] = entry
             self._actuator_health[actuator] = entry
             self.health_ready.emit(group, {actuator: entry})
             self.message.emit(
-                f"Detection actuator {actuator}: baseline {result.baseline_ma:.2f} mA, "
-                f"forward {result.forward_ma:.2f} mA, discharge {result.discharge_ma:.2f} mA, "
+                f"Detection actuator {actuator}: baseline {detection.baseline_ma:.2f} mA, "
+                f"forward {detection.forward_ma:.2f} mA, discharge {detection.discharge_ma:.2f} mA, "
                 f"delta {entry['delta_ma']:.2f} mA -> {'ready' if entry['state'] == 'idle' else entry['state']}.",
                 "ok" if entry["state"] == "idle" else "warn",
             )
@@ -572,24 +496,22 @@ class BoardWorker(QThread):
             self._square_restore_debug = None
 
     @staticmethod
-    def _health_from_currents(
-        baseline_ma: float,
-        forward_ma: float,
-        discharge_ma: float,
-    ) -> dict[str, Any]:
-        delta_ma = round(abs(forward_ma - baseline_ma), 6)
-        if delta_ma < 0.1:
-            state = "disconnected"
-        elif delta_ma > 3.0:
-            state = "error"
+    def _health_from_detection(detection: Any) -> dict[str, Any]:
+        state = str(detection.state.value if hasattr(detection.state, "value") else detection.state)
+        if state == "Ready":
+            health_state = "idle"
+        elif state == "Not connected":
+            health_state = "disconnected"
+        elif state == "Error":
+            health_state = "error"
         else:
-            state = "idle"
+            health_state = "na"
         return {
-            "state": state,
-            "baseline_ma": baseline_ma,
-            "forward_ma": forward_ma,
-            "discharge_ma": discharge_ma,
-            "delta_ma": delta_ma,
+            "state": health_state,
+            "baseline_ma": detection.baseline_ma,
+            "forward_ma": detection.forward_ma,
+            "discharge_ma": detection.discharge_ma,
+            "delta_ma": detection.delta_ma,
         }
 
     def _ensure_actuator_available(self, actuator: int) -> None:
@@ -1254,13 +1176,20 @@ class DashboardWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        log_header = QHBoxLayout()
         log_title = QLabel("Event Log")
         log_title.setObjectName("SectionTitle")
+        self.save_log_btn = QPushButton("Save Log")
+        self.save_log_btn.clicked.connect(self._save_event_log)
+        log_header.addWidget(log_title)
+        log_header.addStretch()
+        log_header.addWidget(self.save_log_btn)
+
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(160)
 
-        layout.addWidget(log_title)
+        layout.addLayout(log_header)
         layout.addWidget(self.log, 1)
         return panel
 
@@ -1471,11 +1400,29 @@ class DashboardWindow(QMainWindow):
             "ok": "#43b97f",
             "warn": "#d8a22c",
             "error": "#e65f5c",
+            "debug": "#6f7f95",
             "info": "#8fa3bf",
         }.get(level, "#8fa3bf")
         timestamp = time.strftime("%H:%M:%S")
         safe_text = html.escape(text)
         self.log.append(f'<span style="color:{color}">[{timestamp}] {safe_text}</span>')
+
+    def _save_event_log(self) -> None:
+        default_name = f"lansing-dashboard-log-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Event Log",
+            str(Path.home() / default_name),
+            "Text Files (*.txt);;Log Files (*.log);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.log.toPlainText() + "\n", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save the event log:\n{exc}")
+            return
+        self._log(f"Event log saved to {path}", "ok")
 
 
 APP_STYLES = """

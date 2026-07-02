@@ -57,7 +57,7 @@ The SDK requires Python 3.10 or newer.
 ## Quick Start
 
 ```python
-from fluid_reality import Lansing
+from fluid_reality import ActuatorState, Lansing
 
 with Lansing("COM5") as board:
     print(board.version())
@@ -65,10 +65,14 @@ with Lansing("COM5") as board:
     board.power_supply(True)
     board.connect_power(True)
 
+    state = board.detect(0)
+    if state is not ActuatorState.READY:
+        raise RuntimeError(f"Actuator 0 is {state.value}")
+
     board.set_actuator(0, 180)
     print("actuator 0:", board.get_actuator(0))
 
-    board.set_actuator(0, 0)
+    board.all_actuators_off()
 
     print("voltage:", board.voltage())
     print("current:", board.current())
@@ -104,7 +108,15 @@ Common operations:
 - `psc_on()` and `psc_off()` are convenience helpers.
 - `voltage(measurement_ms=None)` reads voltage.
 - `current()` reads current.
-- `set_actuator(actuator, value)` writes a normal actuator value.
+- `set_debug_out(destination)` configures SDK debug output. Use `None` to
+  disable output, a `Path` for file logging, an open file handler, or a callback
+  function such as `print` to process each debug line.
+- `detect(actuator)` diagnoses one actuator and updates its SDK state.
+- `actuator_state(actuator)` reads the cached SDK state.
+- `initialize(actuator)` runs the staged SDK initialization sequence and returns
+  the resulting actuator state.
+- `set_actuator(actuator, value)` writes a normal actuator value only when the
+  actuator state is `Ready`.
 - `get_actuator(actuator)` reads one actuator value.
 - `get_actuators()` reads all actuator values.
 - `all_actuators_off()` commands all actuators off.

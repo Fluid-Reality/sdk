@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from fluid_reality import FirmwareError, Lansing
+from fluid_reality import ActuatorState, FirmwareError, Lansing
 
 
 def main() -> None:
@@ -15,6 +15,11 @@ def main() -> None:
 
     with Lansing(args.port) as board:
         try:
+            board.psu_on()
+            board.psc_on()
+            state = board.detect(args.actuator)
+            if state is not ActuatorState.READY:
+                raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
             board.set_actuator(args.actuator, 180)
         except FirmwareError as error:
             print(f"code: {error.code}")
@@ -22,6 +27,8 @@ def main() -> None:
                 print(f"meaning: {error.info.meaning}")
                 print(f"common cause: {error.info.common_cause}")
                 print(f"recovery: {error.info.recovery}")
+        except RuntimeError as error:
+            print(f"runtime error: {error}")
 
 
 if __name__ == "__main__":

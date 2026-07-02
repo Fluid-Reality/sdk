@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import time
 
-from fluid_reality import Lansing
+from fluid_reality import ActuatorState, Lansing
 
 
 def main() -> None:
@@ -21,11 +21,15 @@ def main() -> None:
         print(f"voltage before connect: {board.voltage():.2f} V")
 
         board.psc_on()
+        state = board.detect(args.actuator)
+        if state is not ActuatorState.READY:
+            raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
+
         board.set_actuator(args.actuator, args.value)
         time.sleep(args.hold_s)
 
         print(f"current while active: {board.current():.2f} mA")
-        board.set_actuator(args.actuator, 0)
+        board.all_actuators_off()
 
 
 if __name__ == "__main__":

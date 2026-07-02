@@ -1,12 +1,12 @@
-"""Enable firmware debug messages and route DBG lines through Python logging."""
+"""Enable SDK and firmware debug output."""
 
 from __future__ import annotations
 
 import argparse
-import logging
 import time
+from pathlib import Path
 
-from fluid_reality import Lansing
+from fluid_reality import ActuatorState, Lansing
 
 
 def main() -> None:
@@ -14,18 +14,27 @@ def main() -> None:
     parser.add_argument("port", help="Serial port, for example COM5")
     parser.add_argument("--actuator", type=int, default=0)
     parser.add_argument("--value", type=int, default=120)
+    parser.add_argument(
+        "--debug-out",
+        default="lansing-debug.log",
+        help="Debug destination file path, or none",
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
-    logger = logging.getLogger("fluid_reality.debug")
+    debug_destination = None if args.debug_out.lower() == "none" else Path(args.debug_out)
 
-    with Lansing(args.port, debug_logger=logger, log_debug_messages=True) as board:
+    with Lansing(args.port) as board:
+        board.set_debug_out(debug_destination)
         board.firmware_debug(True)
         board.psu_on()
         board.psc_on()
+        state = board.detect(args.actuator)
+        if state is not ActuatorState.READY:
+            raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
+
         board.set_actuator(args.actuator, args.value)
         time.sleep(0.5)
-        board.set_actuator(args.actuator, 0)
+        board.all_actuators_off()
         board.firmware_debug(False)
 
 

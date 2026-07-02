@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from logging import Logger
 from typing import Callable, Iterable, Mapping, Protocol
 
+from .debug import DebugOut
 from .errors import ErrorInfo, FirmwareError, ProtocolError
 
 
@@ -92,6 +93,7 @@ class TextProtocol:
         debug_logger: Logger | None = None,
         log_debug_messages: bool = False,
         error_info: Mapping[str, ErrorInfo] | None = None,
+        debug_out: DebugOut | None = None,
     ) -> None:
         self.transport = transport
         self.debug_callback = debug_callback
@@ -99,9 +101,11 @@ class TextProtocol:
         self.log_debug_messages = log_debug_messages
         self.error_info = error_info or {}
         self.debug_lines: list[str] = []
+        self.debug_out = debug_out or DebugOut()
 
     def command(self, command: str, *params: object, ok_lines: int = 1) -> list[Response]:
         line = self.format_command(command, params)
+        self.debug_out.emit("protocol", "command.write", line=line, ok_lines=ok_lines)
         self.transport.write_line(line)
         return self.read_result(ok_lines=ok_lines)
 
@@ -109,8 +113,10 @@ class TextProtocol:
         responses: list[Response] = []
         while len(responses) < ok_lines:
             line = self.transport.read_line()
+            self.debug_out.emit("protocol", "line.read", line=line)
             if line.startswith("DBG:"):
                 self.debug_lines.append(line)
+                self.debug_out.emit("firmware", "debug", line=line)
                 if self.log_debug_messages and self.debug_logger is not None:
                     self.debug_logger.debug(line)
                 if self.debug_callback is not None:
@@ -120,12 +126,27 @@ class TextProtocol:
             response = parse_response_line(line)
             if response.status == "ER":
                 code = response.error_code
+                self.debug_out.emit(
+                    "protocol",
+                    "response.error",
+                    code=code,
+                    raw=response.raw,
+                    fields=response.fields,
+                )
                 raise FirmwareError(
                     code=code,
                     raw=response.raw,
                     fields=response.fields,
                     info=self.error_info.get(code),
                 )
+            self.debug_out.emit(
+                "protocol",
+                "response.ok",
+                raw=response.raw,
+                payload=response.payload,
+                values=response.values,
+                fields=response.fields,
+            )
             responses.append(response)
         return responses
 
