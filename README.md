@@ -165,6 +165,12 @@ Wait for discharge to finish before starting the next pulse or interpreting the
 actuator as idle. The SDK and firmware use this discharge phase to return the
 actuator safely toward neutral.
 
+## API Reference
+
+For the complete customer development API reference, including all public
+classes, methods, errors, debug output options, streaming helpers, and code
+examples, see [docs/api_reference.md](docs/api_reference.md).
+
 ## Dashboard
 
 The repository includes a desktop dashboard for connecting to a Lansing board,

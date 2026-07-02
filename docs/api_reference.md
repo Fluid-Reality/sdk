@@ -8,6 +8,30 @@ The PyPI package is named `fluid-reality`. The Python import package is named
 This document focuses on the Lansing Development Kit API provided by
 `fluid_reality.Lansing`.
 
+## Index
+
+- [Installation](#installation)
+- [Finding The Serial Port](#finding-the-serial-port)
+- [Minimal Touch Validation](#minimal-touch-validation)
+- [Imports](#imports)
+- [Lansing Class Constants](#lansing-class-constants)
+- [Object Lifecycle](#object-lifecycle)
+- [Data Types](#data-types)
+- [Power And Telemetry](#power-and-telemetry)
+- [Actuator State And Detection](#actuator-state-and-detection)
+- [Initialization](#initialization)
+- [Normal Actuator Output](#normal-actuator-output)
+- [Runtime Counters](#runtime-counters)
+- [Configuration](#configuration)
+- [Debug Output](#debug-output)
+- [Manual Output And Advanced Bench Control](#manual-output-and-advanced-bench-control)
+- [Streaming](#streaming)
+- [Low-Level Protocol Utilities](#low-level-protocol-utilities)
+- [Response Objects](#response-objects)
+- [Errors](#errors)
+- [Recommended Customer Workflows](#recommended-customer-workflows)
+- [Notes On Safety And Timing](#notes-on-safety-and-timing)
+
 ## Installation
 
 Use Python 3.10 or newer.
