@@ -1,232 +1,166 @@
 # Fluid Reality SDK
 
-Python SDK and desktop tools for Fluid Reality hardware.
+Python SDK for Fluid Reality Lansing Development Kit hardware.
 
-The package published on PyPI is `fluid-reality`; the Python import package is
+The package name on PyPI is `fluid-reality`; the Python import package is
 `fluid_reality`.
-
-## Getting Started
-
-Use Python 3.10 or newer.
-
-To run the Lansing Dashboard, clone the SDK repository and enter the dashboard
-application folder.
-
-macOS or Linux:
-
-```bash
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk/apps/lansing_dashboard
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ../..
-python -m pip install -r requirements.txt
-python app.py
-```
-
-Windows PowerShell:
-
-```powershell
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk\apps\lansing_dashboard
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ..\..
-python -m pip install -r requirements.txt
-python app.py
-```
 
 ## Install
 
-Install the SDK from PyPI:
+Use Python 3.10 or newer.
 
-```powershell
+```bash
+python -m pip install --upgrade pip
 python -m pip install fluid-reality
 ```
 
-For local development from this repository:
+## Find the Serial Port
 
-```powershell
-python -m pip install -e .
-```
-
-The SDK requires Python 3.10 or newer.
-
-## Quick Start
-
-```python
-from fluid_reality import ActuatorState, Lansing
-
-with Lansing("COM5") as board:
-    print(board.version())
-
-    board.power_supply(True)
-    board.connect_power(True)
-
-    state = board.detect(0)
-    if state is not ActuatorState.READY:
-        raise RuntimeError(f"Actuator 0 is {state.value}")
-
-    board.set_actuator(0, 180)
-    print("actuator 0:", board.get_actuator(0))
-
-    board.all_actuators_off()
-
-    print("voltage:", board.voltage())
-    print("current:", board.current())
-```
-
-## Lansing Board Wrapper
-
-`Lansing` is the first board wrapper included in the SDK. It uses actuator
-numbers `0` through `23`.
-
-Create a board from a serial port:
-
-```python
-from fluid_reality import Lansing
-
-board = Lansing("COM5")
-```
-
-The default Lansing serial timeout is 45 seconds so slower board operations
-such as `detect()` and `initialize()` can complete. Pass `timeout=...` only if
-you need a different serial read timeout.
-
-Or use it as a context manager so the serial connection closes automatically:
-
-```python
-from fluid_reality import Lansing
-
-with Lansing("COM5") as board:
-    print(board.status())
-```
-
-Common operations:
-
-- `power_supply(state=None)` reads or sets the power-supply state.
-- `psu_on()` and `psu_off()` are convenience helpers.
-- `connect_power(state=None)` reads or sets the output-connection state.
-- `psc_on()` and `psc_off()` are convenience helpers.
-- `voltage(measurement_ms=None)` reads voltage.
-- `current()` reads current.
-- `set_debug_out(destination)` configures SDK debug output. Use `None` to
-  disable output, a `Path` for file logging, an open file handler, or a callback
-  function such as `print` to process each debug line.
-- `detect(actuator)` diagnoses one actuator and updates its SDK state.
-- `actuator_state(actuator)` reads the cached SDK state.
-- `initialize(actuator)` runs the staged SDK initialization sequence and returns
-  the resulting actuator state.
-- `set_actuator(actuator, value)` writes a normal actuator value only when the
-  actuator state is `Ready`.
-- `get_actuator(actuator)` reads one actuator value.
-- `get_actuators()` reads all actuator values.
-- `all_actuators_off()` commands all actuators off.
-- `manual_output(...)`, `set_manual_output(...)`, and `get_manual_output(...)`
-  provide direct electrode-level bench-control helpers.
-- `diagnose_actuator(actuator)` runs an actuator current diagnosis.
-- `runtime(actuator=None)` reads one runtime total or all runtime totals.
-- `reset_runtimes()` resets all runtime totals.
-- `config(key, value=None)` reads or writes supported device settings.
-- `max_active_time_ms(value=None)` reads or writes maximum active time.
-- `discharge_time_ms(value=None)` reads or writes discharge time.
-- `safety(enabled=None)` reads or writes manual-output safety.
-- `status()` returns a detailed board-state dictionary.
-- `stream_sine(...)` streams a sine waveform and returns the achieved refresh
-  rate.
-
-## Dashboard App
-
-The repository includes a PySide6 dashboard for Lansing boards:
-
-```text
-apps/lansing_dashboard/app.py
-```
-
-Run it from a local checkout:
+Connect the Lansing board over USB, then list the serial devices visible to
+Python:
 
 ```bash
-cd sdk/apps/lansing_dashboard
-python -m pip install -e ../..
-python -m pip install -r requirements.txt
-python app.py
+python -m serial.tools.list_ports
 ```
 
-Dashboard capabilities:
+Use the device name shown by that command when creating `Lansing(...)`.
+The exact name depends on the operating system:
 
-- Connect and disconnect from a serial port.
-- Turn the power supply on or off.
-- Connect or disconnect the output path.
-- View voltage, current, and timing settings.
-- Browse actuators by group: `0-7`, `8-15`, and `16-23`. Most Lansing Development Kit setups use only one populated group with eight actuators, typically Group 0.
-- Auto-detect the selected actuator group when power is ready.
-- Select actuators by clicking cards.
-- Diagnose selected actuators.
-- Recover selected actuators with configurable voltage and duration.
-- Initialize selected actuators with a staged progress display.
-- Run a square wave on the selected actuator until stopped.
-- Watch detailed board events in the log panel.
+- Windows usually reports names such as `COM4` or `COM16`.
+- macOS usually reports names under `/dev/cu.*`, for example a USB modem port.
+- Linux usually reports names under `/dev/tty*`, for example a USB ACM or USB
+  serial device.
 
-For the full customer-facing operating guide, see
-[docs/lansing_dashboard_manual.md](docs/lansing_dashboard_manual.md).
+If more than one device is listed, unplug the board, run the command again,
+then plug it back in and look for the new entry.
 
-See [apps/lansing_dashboard/README.md](apps/lansing_dashboard/README.md) for
-dashboard-specific notes.
+## Touch Validation Example
 
-## Examples
+This example powers the board, detects actuator `0`, initializes it if needed,
+then asks the user to touch the actuator while it pulses once:
 
-Example scripts live in [examples](examples):
+- full on for 250 ms
+- off for 250 ms while the board discharges it in the opposite direction
 
-- [01_basic_actuator_current.py](examples/01_basic_actuator_current.py):
-  turn on power, connect output, activate one actuator, and read current.
-- [02_initialize_and_diagnose.py](examples/02_initialize_and_diagnose.py):
-  initialize and diagnose one actuator.
-- [03_stream_sine.py](examples/03_stream_sine.py):
-  stream a sine wave to one actuator.
-- [04_debug_logging.py](examples/04_debug_logging.py):
-  collect board diagnostic output through Python logging.
-- [05_status_snapshot.py](examples/05_status_snapshot.py):
-  print a full board-state dictionary.
-- [06_manual_output_bench_test.py](examples/06_manual_output_bench_test.py):
-  run direct bench-control output.
-- [07_error_handling.py](examples/07_error_handling.py):
-  catch SDK exceptions and print recovery guidance.
-- [08_actuator_pulse_until_key.py](examples/08_actuator_pulse_until_key.py):
-  repeatedly pulse an actuator until a key is pressed.
+Save this as `touch_validation.py`.
 
-Run an example from a local checkout:
+```python
+import sys
+import time
 
-```powershell
-python examples\05_status_snapshot.py COM5
+from fluid_reality import ActuatorState, Lansing
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        print("Usage: python touch_validation.py <serial-port> <actuator>")
+        print("Find the port with: python -m serial.tools.list_ports")
+        raise SystemExit(2)
+
+    port = sys.argv[1]
+    actuator = int(sys.argv[2])
+
+    with Lansing(port) as board:
+        print("Connected.")
+
+        board.power_supply(True)
+        voltage = board.voltage()
+        print(f"Power supply voltage: {voltage:.2f} V")
+
+        board.connect_power(True)
+        print(f"Idle current: {board.current():.2f} mA")
+
+        state = board.detect(actuator)
+        print(f"Actuator {actuator} state after detection: {state.value}")
+
+        if state is ActuatorState.ERROR:
+            print("Actuator needs initialization. This can take about two minutes.")
+            state = board.initialize(actuator)
+            print(f"Actuator {actuator} state after initialization: {state.value}")
+
+        if state is not ActuatorState.READY:
+            raise RuntimeError(
+                f"Actuator {actuator} is {state.value}; it is not ready to drive."
+            )
+
+        input(f"Touch actuator {actuator}, then press Enter to run the touch validation.")
+
+        print(f"Actuator {actuator} full on for 250 ms.")
+        board.set_actuator(actuator, 255)
+        time.sleep(0.250)
+
+        print(f"Actuator {actuator} off for 250 ms while it discharges.")
+        board.set_actuator(actuator, 0)
+        time.sleep(0.250)
+
+        board.all_actuators_off()
+        print(f"Done. You should have felt actuator {actuator} during the pulse.")
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-## Errors
+Run it with the serial port you found earlier:
 
-SDK exceptions are exported from `fluid_reality` and include structured details
-for device, transport, and parsing failures.
-
-## Development
-
-Install development dependencies and run tests:
-
-```powershell
-python -m pip install -e .
-python -m pip install pytest
-python -m pytest
+```bash
+python touch_validation.py <serial-port> <actuator>
 ```
 
-Useful validation commands:
+For example, replace `<serial-port>` with the port name reported on your
+machine, such as a Windows `COM...` device, a macOS `/dev/cu...` device, or a
+Linux `/dev/tty...` device. To validate actuator 0, pass `0` as the actuator
+number.
 
-```powershell
-python -m compileall -q src examples tests apps
-python -m pytest
-```
+## Core Concepts
 
-## Package Metadata
+`Lansing(port)` opens the board connection. Use it as a context manager so the
+serial port closes cleanly when the script exits.
 
-- PyPI package: `fluid-reality`
-- Import package: `fluid_reality`
-- Current version: `0.1.0`
-- License: MIT
+The power supply and output connection are separate:
+
+- `board.power_supply(True)` turns on the high-voltage supply.
+- `board.voltage()` reads the measured supply voltage. A powered Lansing kit is
+  typically around 215-220 V.
+- `board.connect_power(True)` connects the supply to the output path.
+- `board.current()` reads the current drawn by the system in milliamps.
+
+Actuators have SDK states:
+
+- `Unknown`: the default state when the board object is created.
+- `Ready`: the actuator has been detected and is safe to drive normally.
+- `Not connected`: the SDK did not measure a meaningful current change.
+- `Error`: the current delta is too high for normal operation. Run
+  `board.initialize(actuator)` before trying to use the actuator. Initialization
+  runs a staged recovery sequence and then diagnoses the actuator again. If it
+  returns `Ready`, the actuator can be used normally. If it still returns
+  `Error`, leave the actuator off, check the physical connection, and contact
+  Fluid Reality support before continuing.
+
+Before driving an actuator, call `board.detect(actuator)`. `set_actuator()` only
+works when that actuator is `Ready`.
+
+Actuators may need initialization after storage, shipping, or long periods
+without use. If `detect()` returns `Error`, run `board.initialize(actuator)`.
+Initialization drives the actuator through a staged recovery sequence and then
+diagnoses it again. If initialization succeeds, the state changes to `Ready`.
+
+## Discharge Behavior
+
+Actuator output and discharge are also separate phases. When an actuator is
+turned on with `board.set_actuator(actuator, value)`, it runs forward. When it
+is turned off with `board.set_actuator(actuator, 0)`, the board does not simply
+stop instantly. It automatically discharges the actuator by running it in the
+opposite direction for the same amount of time it was driven forward, up to the
+configured discharge limit.
+
+This means an actuator that was active for 250 ms will discharge for about
+250 ms after it is turned off. An actuator that was active for longer will also
+discharge longer, but the Lansing firmware limits normal forward activation to
+at most 5 seconds and limits discharge to at most 2 seconds. During discharge,
+the actuator can still feel active or busy even though you already commanded it
+off. That is expected behavior.
+
+Wait for discharge to finish before starting the next pulse or interpreting the
+actuator as idle. The SDK and firmware use this discharge phase to return the
+actuator safely toward neutral.
