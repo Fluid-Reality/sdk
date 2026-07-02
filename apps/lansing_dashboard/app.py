@@ -27,6 +27,7 @@ from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractButton,
+    QCheckBox,
     QComboBox,
     QFrame,
     QFileDialog,
@@ -1179,10 +1180,13 @@ class DashboardWindow(QMainWindow):
         log_header = QHBoxLayout()
         log_title = QLabel("Event Log")
         log_title.setObjectName("SectionTitle")
+        self.verbose_log_checkbox = QCheckBox("Verbose")
+        self.verbose_log_checkbox.setChecked(False)
         self.save_log_btn = QPushButton("Save Log")
         self.save_log_btn.clicked.connect(self._save_event_log)
         log_header.addWidget(log_title)
         log_header.addStretch()
+        log_header.addWidget(self.verbose_log_checkbox)
         log_header.addWidget(self.save_log_btn)
 
         self.log = QTextEdit()
@@ -1396,6 +1400,11 @@ class DashboardWindow(QMainWindow):
         self.square_target_btn.setEnabled(available)
 
     def _log(self, text: str, level: str = "info") -> None:
+        if level == "debug" and (
+            not hasattr(self, "verbose_log_checkbox")
+            or not self.verbose_log_checkbox.isChecked()
+        ):
+            return
         color = {
             "ok": "#43b97f",
             "warn": "#d8a22c",
