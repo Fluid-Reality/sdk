@@ -69,6 +69,7 @@ class Lansing(Board):
     """Wrapper for the Lansing actuator controller firmware."""
 
     actuator_count = 24
+    default_timeout_s = 45.0
     min_output = 0
     max_output = 255
     not_connected_delta_ma = 0.1
@@ -82,7 +83,7 @@ class Lansing(Board):
         port: str | None = None,
         *,
         baudrate: int = 250000,
-        timeout: float = 1.0,
+        timeout: float = default_timeout_s,
         transport: LineTransport | None = None,
         debug_callback: Callable[[str], None] | None = None,
         debug_logger: Logger | None = None,

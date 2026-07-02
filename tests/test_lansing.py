@@ -36,6 +36,31 @@ def test_lansing_reads_version_fields():
     assert transport.writes == ["VER"]
 
 
+def test_lansing_default_timeout_allows_slow_board_operations(monkeypatch):
+    created = {}
+
+    class FakeSerialTransport(FakeTransport):
+        def __init__(self, port, *, baudrate, timeout, **kwargs):
+            super().__init__()
+            created.update(
+                {
+                    "port": port,
+                    "baudrate": baudrate,
+                    "timeout": timeout,
+                    "kwargs": kwargs,
+                }
+            )
+
+    monkeypatch.setattr("fluid_reality.boards.lansing.SerialTransport", FakeSerialTransport)
+
+    board = Lansing("COM16")
+
+    assert isinstance(board.transport, FakeSerialTransport)
+    assert created["port"] == "COM16"
+    assert created["baudrate"] == 250000
+    assert created["timeout"] == Lansing.default_timeout_s
+
+
 def test_lansing_skips_debug_lines_before_result():
     transport = FakeTransport(["DBG:COMMAND>ACT,ACTUATOR>1,VALUE>200", "OK:ACT"])
     debug_lines = []

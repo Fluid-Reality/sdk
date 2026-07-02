@@ -91,6 +91,10 @@ from fluid_reality import Lansing
 board = Lansing("COM5")
 ```
 
+The default Lansing serial timeout is 45 seconds so slower board operations
+such as `detect()` and `initialize()` can complete. Pass `timeout=...` only if
+you need a different serial read timeout.
+
 Or use it as a context manager so the serial connection closes automatically:
 
 ```python

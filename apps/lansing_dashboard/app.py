@@ -18,7 +18,6 @@ SDK_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = SDK_ROOT / "src"
 APP_ROOT = Path(__file__).resolve().parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
-SERIAL_TIMEOUT_S = 45.0
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
@@ -170,7 +169,7 @@ class BoardWorker(QThread):
     def _connect(self, port: str) -> None:
         self._close_board()
         self.busy_changed.emit("Connecting")
-        self._board = Lansing(port, timeout=SERIAL_TIMEOUT_S)
+        self._board = Lansing(port)
         self._board.set_debug_out(self._emit_debug)
         self._board.force_text_mode()
         version = self._board.firmware_version()
