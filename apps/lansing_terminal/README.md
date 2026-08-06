@@ -1,44 +1,38 @@
 # Lansing Terminal
 
-Interactive command-line controller for the Fluid Reality Lansing board.
+Command-line operator interface for the Fluid Reality Lansing Development Kit.
 
-Use this app when a graphical desktop is not available, for example from an SSH
-session, a lab machine without a display, or an automated setup bench where a
-terminal workflow is preferred.
+Use the terminal when a graphical desktop is unavailable, from an SSH session,
+or when a scriptable interface is preferable to the Lansing Dashboard. It
+supports interactive commands, fail-fast command sequences, and
+newline-delimited JSON for automation.
+
+For installation details, safety guidance, the complete command reference,
+JSON schemas, automation behavior, exit codes, and troubleshooting, see the
+[Lansing Terminal Operator and Command Reference](docs/lansing_terminal_manual.md).
 
 ## Features
 
 - List serial ports and connect to a Lansing board.
-- Turn the high-voltage power supply on or off.
-- Connect or open the actuator output path.
-- Read voltage, current, timing configuration, safety, firmware debug, and
-  actuator runtime.
-- Detect one actuator or an eight-actuator group.
-- Show actuator states: `Unknown`, `Ready`, `Error`, and `Not connected`.
-- Diagnose and initialize actuators using the SDK stateful workflow.
-- Run advanced recovery with configurable voltage and duration.
-- Run an indefinite square wave until stopped:
-  - 1 second full on at value `255`
-  - command off for firmware-managed discharge
-  - wait for firmware discharge debug confirmation before reactivating
-- Save or print the terminal event log.
-- Use `help` and `help <command>` for command-specific guidance.
+- Control the high-voltage power supply and PSU connection independently.
+- Read voltage, current, configuration, status, and runtime counters.
+- Detect individual actuators or eight-actuator groups.
+- Show `Unknown`, `Ready`, `Error`, and `Not connected` actuator states.
+- Diagnose, initialize, and recover actuators.
+- Control normal actuator output through SDK and firmware safety checks.
+- Perform advanced positive/negative manual-output bench tests.
+- Run continuous square-wave tests with firmware discharge confirmation.
+- Capture SDK and terminal event logs.
+- Emit human-readable text or newline-delimited JSON.
+- Initialize actuators to a target current delta using PowerShell, POSIX shell,
+  or Windows batch automation.
 
 ## Install
 
-macOS or Linux:
+The application requirements install the published `fluid-reality` package
+from PyPI.
 
-```bash
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk/apps/lansing_terminal
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python app.py
-```
-
-Windows PowerShell:
+### Windows PowerShell
 
 ```powershell
 git clone https://github.com/Fluid-Reality/sdk.git
@@ -47,105 +41,95 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python app.py
+python lansing_terminal.py
 ```
 
-The terminal requirements install the published `fluid-reality` package from
-PyPI.
+### macOS or Linux
+
+```bash
+git clone https://github.com/Fluid-Reality/sdk.git
+cd sdk/apps/lansing_terminal
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python lansing_terminal.py
+```
 
 ## Quick Start
 
-Start the app:
+List serial ports without opening a board:
 
 ```bash
-python app.py
+python lansing_terminal.py -c "ports"
 ```
 
-Run commands non-interactively with `-c`. Separate commands with semicolons:
-
-```bash
-python app.py -c "ports"
-python app.py --port <serial-port> -c "status; psu on; voltage; output on; current"
-```
-
-The app stops on the first command error, closes the board connection, and
-returns a non-zero process exit code.
-
-List ports:
+Start an interactive session and connect from the terminal:
 
 ```text
+python lansing_terminal.py
 lansing(disconnected)> ports
-```
-
-Connect to the board. Use the serial port reported by `ports`, for example
-`COM4`, `/dev/cu.usbmodem...`, or `/dev/ttyACM0`.
-
-```text
 lansing(disconnected)> connect <serial-port>
-```
-
-Enable the power supply and output connection:
-
-```text
 lansing> psu on
 lansing> voltage
-lansing> output on
+lansing> psuc on
 lansing> current
-```
-
-Detect and use actuator 0:
-
-```text
 lansing> detect 0
-lansing> initialize 0
-lansing> set 0 255
-lansing> set 0 0
 ```
 
-Only run `initialize` when detection reports `Error` or when an actuator needs
-conditioning after storage. `set` works only when the actuator state is
-`Ready`.
+Connect during startup:
 
-## Common Commands
-
-```text
-help
-help detect
-ports
-connect <serial-port>
-disconnect
-status
-psu [on|off]
-output [on|off]
-voltage [measurement_ms]
-current
-config show
-config get <MAX|DIS|SAFE|DEBUG>
-config set <MAX|DIS|SAFE|DEBUG> <value>
-safety [on|off]
-detect <actuator>
-detect group <0|1|2>
-states [group <0|1|2>]
-diagnose <actuator>
-initialize <actuator>
-recover <actuator> [voltage=50] [duration_s=60]
-set <actuator> <value>
-off <actuator>|all
-square start <actuator> [actuator...]
-square stop
-square status
-runtime [actuator]
-reset_runtimes
-manual get <actuator>
-manual set <actuator> <positive> <negative>
-debug on
-debug off
-debug file <path>
-log show
-log clear
-log save <path>
-reboot
-exit
+```powershell
+python lansing_terminal.py --port COM6
 ```
 
-Use `help <command>` inside the app for details and safety context.
+Run a fail-fast command sequence:
+
+```powershell
+python lansing_terminal.py --port COM6 `
+    -c "psu on; psuc on; detect 0; diagnose 0"
+```
+
+Emit newline-delimited JSON:
+
+```powershell
+python lansing_terminal.py -j --port COM6 -c "status; diagnose 0"
+```
+
+## Target-Current Automation
+
+The terminal includes equivalent target-current initialization workflows for
+PowerShell, Linux/macOS, and Windows Command Prompt. Each workflow detects
+actuators, initializes while current delta improves, stops at the requested
+target or on a stall, enforces an attempt limit, and shuts power down during
+cleanup by default.
+
+PowerShell:
+
+```powershell
+.\initialize_all.ps1 -Port COM6 -TargetDeltaMa 1.5
+```
+
+Linux or macOS:
+
+```bash
+./initialize_all.sh --port /dev/ttyACM0 --target-delta-ma 1.5
+```
+
+Windows Command Prompt:
+
+```bat
+initialize_all.bat --port COM6 --target-delta-ma 1.5
+```
+
+See the [automation reference](docs/lansing_terminal_manual.md#initialize-actuators-to-a-target-current-delta)
+for platform setup, every option, stop conditions, exit codes, and safety
+behavior.
+
+## Documentation
+
+- [Lansing Terminal Operator and Command Reference](docs/lansing_terminal_manual.md)
+- [Fluid Reality SDK overview](../../README.md)
+- [Python SDK API reference](../../docs/api_reference.md)
+- [Lansing Development Kit start-here guide](../../docs/lansing_kit_start_here/README.md)
+- [Lansing Dashboard](../lansing_dashboard/README.md)

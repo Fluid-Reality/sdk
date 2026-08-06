@@ -2,13 +2,14 @@
 
 Run from the SDK root with:
 
-    python -m apps.lansing_terminal.app
+    python -m apps.lansing_terminal.lansing_terminal
 """
 
 from __future__ import annotations
 
 import argparse
 import cmd
+import json
 import shlex
 import sys
 import threading
@@ -18,7 +19,7 @@ from typing import Callable, Iterable
 
 from serial.tools import list_ports
 
-from fluid_reality import ActuatorState, FirmwareError, Lansing
+from fluid_reality import ActuatorState, FirmwareError, FluidRealityError, Lansing
 
 
 PROMPT = "lansing> "
@@ -37,6 +38,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Print SDK debug output as commands run.",
+    )
+    parser.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Write command results as newline-delimited JSON objects.",
     )
     parser.add_argument(
         "-c",
@@ -60,9 +68,9 @@ def yes_no(value: object) -> str:
 
 def bool_arg(value: str) -> bool:
     text = value.strip().lower()
-    if text in {"on", "1", "true", "yes", "closed", "connect", "connected"}:
+    if text == "on":
         return True
-    if text in {"off", "0", "false", "no", "open", "disconnect", "disconnected"}:
+    if text == "off":
         return False
     raise ValueError(f"Expected on/off, got {value!r}.")
 
@@ -242,11 +250,15 @@ class LansingTerminal(cmd.Cmd):
     prompt = DISCONNECTED_PROMPT
     ruler = "-"
 
-    def __init__(self, *, verbose: bool = False) -> None:
+    def __init__(self, *, verbose: bool = False, json_output: bool = False) -> None:
         super().__init__()
         self.board: Lansing | None = None
         self.connected_port: str | None = None
         self.verbose = verbose
+        self.json_output = json_output
+        if json_output:
+            self.intro = None
+            self.prompt = ""
         self.log_lines: list[str] = []
         self.error_count = 0
         self._lock = threading.RLock()
@@ -262,26 +274,58 @@ class LansingTerminal(cmd.Cmd):
         return line.strip()
 
     def postcmd(self, stop: bool, line: str) -> bool:
-        self.prompt = PROMPT if self.board is not None else DISCONNECTED_PROMPT
+        if not self.json_output:
+            self.prompt = PROMPT if self.board is not None else DISCONNECTED_PROMPT
         return stop
 
     def onecmd(self, line: str) -> bool:
         try:
             return super().onecmd(line)
-        except (FirmwareError, RuntimeError, ValueError, OSError) as exc:
+        except (FluidRealityError, RuntimeError, ValueError, OSError) as exc:
             self._error(str(exc))
             return False
+
+    def do_help(self, arg: str) -> None:
+        """Show available commands or help for one command."""
+
+        if not self.json_output:
+            super().do_help(arg)
+            return
+        topic = arg.strip()
+        if topic:
+            helper = getattr(self, f"help_{topic}", None)
+            command = getattr(self, f"do_{topic}", None)
+            if helper is not None:
+                text = helper.__doc__ or ""
+            elif command is not None:
+                text = command.__doc__ or ""
+            else:
+                self._error(f"No help available for {topic!r}.")
+                return
+            self._emit("", event="help", topic=topic, text=text.strip())
+            return
+        commands = sorted(
+            name.removeprefix("do_")
+            for name in self.get_names()
+            if name.startswith("do_") and name != "do_EOF"
+        )
+        self._emit("", event="help", commands=commands)
 
     def do_ports(self, arg: str) -> None:
         """List serial ports visible to Python."""
 
         ports = list(list_ports.comports())
         if not ports:
-            print("No serial ports found.")
+            self._emit("No serial ports found.", event="serial_ports", ports=[])
             return
         for item in ports:
             description = item.description or "serial port"
-            print(f"{item.device}\t{description}")
+            self._emit(
+                f"{item.device}\t{description}",
+                event="serial_port",
+                port=item.device,
+                description=description,
+            )
 
     def do_connect(self, arg: str) -> None:
         """connect <port>
@@ -322,19 +366,41 @@ class LansingTerminal(cmd.Cmd):
         with self._lock:
             status = self._require_board().status()
             states = self._require_board().actuator_states
+        config = status["config"]
+        counts = {state: states.count(state) for state in ActuatorState}
+        if self.json_output:
+            self._emit(
+                "",
+                event="status",
+                port=self.connected_port,
+                power_supply=yes_no(status["psu"]),
+                psu_connection=yes_no(status["psc"]),
+                voltage_v=float(status["voltage"]),
+                current_ma=float(status["current"]),
+                config={
+                    "max_active_ms": int(config["max_active_ms"]),
+                    "discharge_ms": int(config["discharge_ms"]),
+                    "safe": yes_no(config["safe"]) == "on",
+                    "debug": yes_no(config["debug"]) == "on",
+                },
+                square_wave={
+                    "running": self.square.running,
+                    "actuators": list(self.square.actuators),
+                },
+                actuator_counts={state.value: count for state, count in counts.items()},
+            )
+            return
         print(f"Port: {self.connected_port}")
         print(f"Power supply: {yes_no(status['psu'])}")
-        print(f"Output connection: {'connected' if yes_no(status['psc']) == 'on' else 'open'}")
+        print(f"PSU connection: {yes_no(status['psc'])}")
         print(f"Voltage: {float(status['voltage']):.2f} V")
         print(f"Current: {float(status['current']):.2f} mA")
-        config = status["config"]
         print(
             "Timing: max "
             f"{format_ms(config['max_active_ms'])}, discharge {format_ms(config['discharge_ms'])}"
         )
         print(f"Safety: {yes_no(config['safe'])}; firmware debug: {yes_no(config['debug'])}")
         print(f"Square wave: {'running' if self.square.running else 'stopped'}")
-        counts = {state: states.count(state) for state in ActuatorState}
         print(
             "Actuators: "
             f"{counts[ActuatorState.READY]} Ready, "
@@ -352,18 +418,26 @@ class LansingTerminal(cmd.Cmd):
         state = self._optional_bool(arg, "psu [on|off]")
         with self._lock:
             result = self._require_board().power_supply(state)
-        print(f"Power supply: {yes_no(result)}")
+        self._emit(
+            f"Power supply: {yes_no(result)}",
+            event="power_supply",
+            state=yes_no(result),
+        )
 
-    def do_output(self, arg: str) -> None:
-        """output [on|off]
+    def do_psuc(self, arg: str) -> None:
+        """psuc [on|off]
 
-        Read or set the output connection between the power supply and actuators.
+        Read or set the PSU connection to the actuator output path.
         """
 
-        state = self._optional_bool(arg, "output [on|off]")
+        state = self._optional_bool(arg, "psuc [on|off]")
         with self._lock:
             result = self._require_board().connect_power(state)
-        print(f"Output connection: {'connected' if yes_no(result) == 'on' else 'open'}")
+        self._emit(
+            f"PSU connection: {yes_no(result)}",
+            event="psu_connection",
+            state=yes_no(result),
+        )
 
     def do_voltage(self, arg: str) -> None:
         """voltage [measurement_ms]
@@ -377,14 +451,14 @@ class LansingTerminal(cmd.Cmd):
         measurement_ms = int(parts[0]) if parts else None
         with self._lock:
             value = self._require_board().voltage(measurement_ms)
-        print(f"{value:.2f} V")
+        self._emit(f"{value:.2f} V", event="voltage", voltage_v=value)
 
     def do_current(self, arg: str) -> None:
         """Read current draw in milliamps."""
 
         with self._lock:
             value = self._require_board().current()
-        print(f"{value:.2f} mA")
+        self._emit(f"{value:.2f} mA", event="current", current_ma=value)
 
     def do_config(self, arg: str) -> None:
         """config [show|get <MAX|DIS|SAFE|DEBUG>|set <MAX|DIS|SAFE|DEBUG> <value>]
@@ -396,20 +470,30 @@ class LansingTerminal(cmd.Cmd):
         if not parts or parts[0] == "show":
             with self._lock:
                 config = self._require_board().read_config()
-            print(f"max_active_ms: {config.max_active_ms}")
-            print(f"discharge_ms: {config.discharge_ms}")
-            print(f"safe: {yes_no(config.safe)}")
-            print(f"debug: {yes_no(config.debug)}")
+            if self.json_output:
+                self._emit(
+                    "",
+                    event="config",
+                    max_active_ms=config.max_active_ms,
+                    discharge_ms=config.discharge_ms,
+                    safe=config.safe,
+                    debug=config.debug,
+                )
+            else:
+                print(f"max_active_ms: {config.max_active_ms}")
+                print(f"discharge_ms: {config.discharge_ms}")
+                print(f"safe: {yes_no(config.safe)}")
+                print(f"debug: {yes_no(config.debug)}")
             return
         if len(parts) == 2 and parts[0] == "get":
             with self._lock:
                 value = self._require_board().config(parts[1])
-            print(value)
+            self._emit(str(value), event="config", operation="get", key=parts[1].upper(), value=value)
             return
         if len(parts) == 3 and parts[0] == "set":
             with self._lock:
                 value = self._require_board().config(parts[1], parts[2])
-            print(value)
+            self._emit(str(value), event="config", operation="set", key=parts[1].upper(), value=value)
             return
         raise ValueError("Usage: config [show|get <key>|set <key> <value>]")
 
@@ -422,7 +506,11 @@ class LansingTerminal(cmd.Cmd):
         state = self._optional_bool(arg, "safety [on|off]")
         with self._lock:
             value = self._require_board().safety(state)
-        print(f"Safety: {yes_no(value)}")
+        self._emit(
+            f"Safety: {yes_no(value)}",
+            event="safety",
+            enabled=bool(value),
+        )
 
     def do_detect(self, arg: str) -> None:
         """detect <actuator>|group <0|1|2>
@@ -473,19 +561,37 @@ class LansingTerminal(cmd.Cmd):
             stage = int(data["stage_index"])
             count = int(data["stage_count"])
             voltage = float(data["stage_voltage"])
-            print(
-                f"\rInitializing actuator {actuator}: "
-                f"{elapsed:5.1f}/{total:.0f}s, stage {stage}/{count}, +/-{voltage:.0f} V",
-                end="",
-                flush=True,
-            )
+            if self.json_output:
+                self._emit(
+                    "",
+                    event="initialization_progress",
+                    actuator=actuator,
+                    elapsed_s=elapsed,
+                    total_s=total,
+                    stage=stage,
+                    stage_count=count,
+                    voltage_v=voltage,
+                )
+            else:
+                print(
+                    f"\rInitializing actuator {actuator}: "
+                    f"{elapsed:5.1f}/{total:.0f}s, stage {stage}/{count}, +/-{voltage:.0f} V",
+                    end="",
+                    flush=True,
+                )
 
         with self._lock:
             board = self._require_board()
             state = board.initialize(actuator, progress_callback=progress)
             detection = board.last_detection(actuator)
-        print()
-        print(f"Initialization complete: {state.value}")
+        if not self.json_output:
+            print()
+        self._emit(
+            f"Initialization complete: {state.value}",
+            event="initialization_complete",
+            actuator=actuator,
+            state=state.value,
+        )
         if detection is not None:
             self._print_detection(detection)
 
@@ -517,9 +623,15 @@ class LansingTerminal(cmd.Cmd):
             baseline_ma = board.current()
             previous_safety = board.safety()
 
-        print(
+        self._emit(
             f"Recovering actuator {actuator} at +/-{target_voltage:.1f} V for {duration_s}s "
-            f"(raw {output_value}/255 from {supply_voltage:.1f} V PSU)."
+            f"(raw {output_value}/255 from {supply_voltage:.1f} V PSU).",
+            event="recovery_started",
+            actuator=actuator,
+            target_voltage_v=target_voltage,
+            duration_s=duration_s,
+            output_value=output_value,
+            supply_voltage_v=supply_voltage,
         )
         samples: list[float] = []
         try:
@@ -550,9 +662,15 @@ class LansingTerminal(cmd.Cmd):
                 delta_ma = abs(current_ma - baseline_ma)
                 whole_second = int(elapsed)
                 if whole_second >= next_report_second:
-                    print(
+                    self._emit(
                         f"Recovery {actuator}: {whole_second}/{duration_s}s, "
-                        f"current {current_ma:.2f} mA, delta {delta_ma:.2f} mA"
+                        f"current {current_ma:.2f} mA, delta {delta_ma:.2f} mA",
+                        event="recovery_progress",
+                        actuator=actuator,
+                        elapsed_s=whole_second,
+                        duration_s=duration_s,
+                        current_ma=current_ma,
+                        delta_ma=delta_ma,
                     )
                     next_report_second = whole_second + 1
                 time.sleep(0.1)
@@ -565,11 +683,17 @@ class LansingTerminal(cmd.Cmd):
                     board.safety(previous_safety)
         recovery_ma = sum(samples) / len(samples) if samples else baseline_ma
         delta_ma = abs(recovery_ma - baseline_ma)
-        print(
+        self._emit(
             f"Recovery complete: baseline {baseline_ma:.2f} mA, "
-            f"average {recovery_ma:.2f} mA, delta {delta_ma:.2f} mA."
+            f"average {recovery_ma:.2f} mA, delta {delta_ma:.2f} mA.",
+            event="recovery_complete",
+            actuator=actuator,
+            baseline_ma=baseline_ma,
+            average_ma=recovery_ma,
+            delta_ma=delta_ma,
         )
-        print("Run 'diagnose {0}' to update the actuator state.".format(actuator))
+        if not self.json_output:
+            print("Run 'diagnose {0}' to update the actuator state.".format(actuator))
 
     def do_set(self, arg: str) -> None:
         """set <actuator> <value>
@@ -585,7 +709,12 @@ class LansingTerminal(cmd.Cmd):
         value = parse_output(parts[1])
         with self._lock:
             self._require_board().set_actuator(actuator, value)
-        print(f"Actuator {actuator} set to {value}.")
+        self._emit(
+            f"Actuator {actuator} set to {value}.",
+            event="actuator_output",
+            actuator=actuator,
+            value=value,
+        )
 
     def do_off(self, arg: str) -> None:
         """off <actuator>|all
@@ -600,11 +729,15 @@ class LansingTerminal(cmd.Cmd):
             board = self._require_board()
             if parts[0] == "all":
                 board.all_actuators_off()
-                print("All actuators commanded off.")
+                self._emit("All actuators commanded off.", event="actuators_off", actuator="all")
             else:
                 actuator = parse_actuator(parts[0])
                 board.set_actuator(actuator, 0)
-                print(f"Actuator {actuator} commanded off.")
+                self._emit(
+                    f"Actuator {actuator} commanded off.",
+                    event="actuators_off",
+                    actuator=actuator,
+                )
 
     def do_square(self, arg: str) -> None:
         """square start <actuator> [actuator...] | square stop | square status
@@ -619,9 +752,19 @@ class LansingTerminal(cmd.Cmd):
             return
         if parts == ["status"]:
             if self.square.running:
-                print("Square wave running on " + ", ".join(map(str, self.square.actuators)))
+                self._emit(
+                    "Square wave running on " + ", ".join(map(str, self.square.actuators)),
+                    event="square_wave",
+                    running=True,
+                    actuators=list(self.square.actuators),
+                )
             else:
-                print("Square wave stopped.")
+                self._emit(
+                    "Square wave stopped.",
+                    event="square_wave",
+                    running=False,
+                    actuators=[],
+                )
             return
         if len(parts) >= 2 and parts[0] == "start":
             actuators = [parse_actuator(value) for value in parts[1:]]
@@ -652,18 +795,29 @@ class LansingTerminal(cmd.Cmd):
                 runtimes = board.runtime()
             else:
                 actuator = parse_actuator(parts[0])
-                print(f"{actuator}: {format_ms(board.runtime(actuator))}")
+                runtime_ms = int(board.runtime(actuator))
+                self._emit(
+                    f"{actuator}: {format_ms(runtime_ms)}",
+                    event="runtime",
+                    actuator=actuator,
+                    runtime_ms=runtime_ms,
+                )
                 return
         assert isinstance(runtimes, tuple)
         for index, runtime_ms in enumerate(runtimes):
-            print(f"{index:02d}: {format_ms(runtime_ms)}")
+            self._emit(
+                f"{index:02d}: {format_ms(runtime_ms)}",
+                event="runtime",
+                actuator=index,
+                runtime_ms=runtime_ms,
+            )
 
     def do_reset_runtimes(self, arg: str) -> None:
         """Reset all actuator runtime counters."""
 
         with self._lock:
             self._require_board().reset_runtimes()
-        print("Runtime counters reset.")
+        self._emit("Runtime counters reset.", event="runtimes_reset")
 
     def do_states(self, arg: str) -> None:
         """states [group <0|1|2>]
@@ -687,12 +841,24 @@ class LansingTerminal(cmd.Cmd):
                 state = board.actuator_state(actuator)
                 detection = board.last_detection(actuator)
                 if detection is None:
-                    print(f"{actuator:02d}: {state.value}")
+                    self._emit(
+                        f"{actuator:02d}: {state.value}",
+                        event="actuator_state",
+                        actuator=actuator,
+                        state=state.value,
+                    )
                 else:
-                    print(
+                    self._emit(
                         f"{actuator:02d}: {state.value}, delta {detection.delta_ma:.2f} mA "
                         f"(base {detection.baseline_ma:.2f}, fwd {detection.forward_ma:.2f}, "
-                        f"dis {detection.discharge_ma:.2f})"
+                        f"dis {detection.discharge_ma:.2f})",
+                        event="actuator_state",
+                        actuator=actuator,
+                        state=state.value,
+                        delta_ma=detection.delta_ma,
+                        baseline_ma=detection.baseline_ma,
+                        forward_ma=detection.forward_ma,
+                        discharge_ma=detection.discharge_ma,
                     )
 
     def do_manual(self, arg: str) -> None:
@@ -706,14 +872,26 @@ class LansingTerminal(cmd.Cmd):
             board = self._require_board()
             if len(parts) == 2 and parts[0] == "get":
                 output = board.get_manual_output(parse_actuator(parts[1]))
-                print(f"{output.actuator}: positive {output.positive}, negative {output.negative}")
+                self._emit(
+                    f"{output.actuator}: positive {output.positive}, negative {output.negative}",
+                    event="manual_output",
+                    actuator=output.actuator,
+                    positive=output.positive,
+                    negative=output.negative,
+                )
                 return
             if len(parts) == 4 and parts[0] == "set":
                 actuator = parse_actuator(parts[1])
                 positive = parse_output(parts[2])
                 negative = parse_output(parts[3])
                 board.set_manual_output(actuator, positive, negative)
-                print(f"Manual output {actuator}: positive {positive}, negative {negative}")
+                self._emit(
+                    f"Manual output {actuator}: positive {positive}, negative {negative}",
+                    event="manual_output",
+                    actuator=actuator,
+                    positive=positive,
+                    negative=negative,
+                )
                 return
         raise ValueError("Usage: manual get <actuator> | manual set <actuator> <positive> <negative>")
 
@@ -730,19 +908,23 @@ class LansingTerminal(cmd.Cmd):
             with self._lock:
                 if self.board is not None:
                     self.board.set_debug_out(self._debug)
-            print("Terminal debug output enabled.")
+            self._emit("Terminal debug output enabled.", event="debug", enabled=True)
             return
         if parts == ["off"]:
             self.verbose = False
             with self._lock:
                 if self.board is not None:
                     self.board.set_debug_out(self._debug)
-            print("Terminal debug output disabled.")
+            self._emit("Terminal debug output disabled.", event="debug", enabled=False)
             return
         if len(parts) == 2 and parts[0] == "file":
             with self._lock:
                 self._require_board().set_debug_out(Path(parts[1]))
-            print(f"Future SDK debug output will be written to {parts[1]}.")
+            self._emit(
+                f"Future SDK debug output will be written to {parts[1]}.",
+                event="debug_file",
+                path=parts[1],
+            )
             return
         raise ValueError("Usage: debug on|off|file <path>")
 
@@ -754,15 +936,18 @@ class LansingTerminal(cmd.Cmd):
 
         parts = shlex.split(arg)
         if parts == ["show"]:
-            print("\n".join(self.log_lines))
+            if self.json_output:
+                self._emit("", event="log", lines=list(self.log_lines))
+            else:
+                print("\n".join(self.log_lines))
             return
         if parts == ["clear"]:
             self.log_lines.clear()
-            print("Log cleared.")
+            self._emit("Log cleared.", event="log_cleared")
             return
         if len(parts) == 2 and parts[0] == "save":
             Path(parts[1]).write_text("\n".join(self.log_lines) + "\n", encoding="utf-8")
-            print(f"Log saved to {parts[1]}.")
+            self._emit(f"Log saved to {parts[1]}.", event="log_saved", path=parts[1])
             return
         raise ValueError("Usage: log show|clear|save <path>")
 
@@ -771,7 +956,7 @@ class LansingTerminal(cmd.Cmd):
 
         with self._lock:
             self._require_board().reboot()
-        print("Reboot command sent.")
+        self._emit("Reboot command sent.", event="reboot")
 
     def do_exit(self, arg: str) -> bool:
         """Exit the terminal app."""
@@ -788,7 +973,8 @@ class LansingTerminal(cmd.Cmd):
     def do_EOF(self, arg: str) -> bool:
         """Exit on Ctrl-D."""
 
-        print()
+        if not self.json_output:
+            print()
         return self.do_exit(arg)
 
     def run_script(self, script: str) -> int:
@@ -797,7 +983,10 @@ class LansingTerminal(cmd.Cmd):
         commands = [command.strip() for command in script.split(";") if command.strip()]
         for command in commands:
             before_errors = self.error_count
-            print(f"{self.prompt}{command}")
+            if self.json_output:
+                self._emit("", event="command", command=command)
+            else:
+                print(f"{self.prompt}{command}")
             stop = self._run_command(command)
             if self.error_count > before_errors:
                 self.square.stop()
@@ -815,13 +1004,17 @@ class LansingTerminal(cmd.Cmd):
         return self.postcmd(stop, line)
 
     def _detect_one(self, actuator: int) -> None:
-        print(f"Detecting actuator {actuator}...")
+        self._emit(
+            f"Detecting actuator {actuator}...",
+            event="detection_started",
+            actuator=actuator,
+        )
         with self._lock:
             detection = self._require_board().detect_actuator(actuator)
         self._print_detection(detection)
 
     def _print_detection(self, detection: object) -> None:
-        print(
+        self._emit(
             "Actuator {actuator}: {state}, delta {delta:.2f} mA "
             "(baseline {baseline:.2f}, forward {forward:.2f}, discharge {discharge:.2f})".format(
                 actuator=getattr(detection, "actuator"),
@@ -830,7 +1023,13 @@ class LansingTerminal(cmd.Cmd):
                 baseline=getattr(detection, "baseline_ma"),
                 forward=getattr(detection, "forward_ma"),
                 discharge=getattr(detection, "discharge_ma"),
-            )
+            ),
+            actuator=getattr(detection, "actuator"),
+            state=state_name(getattr(detection, "state")),
+            delta_ma=getattr(detection, "delta_ma"),
+            baseline_ma=getattr(detection, "baseline_ma"),
+            forward_ma=getattr(detection, "forward_ma"),
+            discharge_ma=getattr(detection, "discharge_ma"),
         )
 
     def _single_actuator(self, arg: str, usage: str) -> int:
@@ -862,20 +1061,33 @@ class LansingTerminal(cmd.Cmd):
                 self.board = None
                 self.connected_port = None
 
+    def _emit(self, text: str, **payload: object) -> None:
+        if self.json_output:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        else:
+            print(text)
+
     def _debug(self, line: str) -> None:
         self.log_lines.append(line)
         if self.verbose:
-            print(f"[debug] {line}")
+            self._emit(f"[debug] {line}", event="debug_message", message=line)
 
-    def _log(self, message: str) -> None:
+    def _log(self, message: str, *, level: str = "info") -> None:
         timestamp = time.strftime("%H:%M:%S")
-        line = f"[{timestamp}] {message}"
+        display_message = message if level != "error" else f"Error: {message}"
+        line = f"[{timestamp}] {display_message}"
         self.log_lines.append(line)
-        print(line)
+        self._emit(
+            line,
+            event="log" if level == "info" else "error",
+            timestamp=timestamp,
+            level=level,
+            message=message,
+        )
 
     def _error(self, message: str) -> None:
         self.error_count += 1
-        self._log(f"Error: {message}")
+        self._log(message, level="error")
 
     @staticmethod
     def _voltage_to_output(target_voltage: float, supply_voltage: float) -> int:
@@ -885,7 +1097,7 @@ class LansingTerminal(cmd.Cmd):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    shell = LansingTerminal(verbose=args.verbose)
+    shell = LansingTerminal(verbose=args.verbose, json_output=args.json_output)
     if args.port:
         shell._run_command(f"connect {shlex.quote(args.port)}")
         if shell.error_count:
@@ -895,7 +1107,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         shell.cmdloop()
     except KeyboardInterrupt:
-        print()
+        if not shell.json_output:
+            print()
         shell.do_exit("")
     return 0
 

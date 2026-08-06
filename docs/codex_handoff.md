@@ -287,6 +287,68 @@ An offscreen PySide smoke test was also used to verify:
 
 On this Windows machine, the offscreen Qt renderer can display square placeholder glyphs because of headless/offscreen font limitations. Do not confuse that with the macOS screenshot issue; the Mac issue was about real Qt palette/font fallback behavior.
 
+## 2026-08-06 Lansing Terminal Update
+
+The SDK contains a command-line Lansing operator interface. Its entry point is
+intentionally descriptive; do not rename it back to a generic `app.py`:
+
+```text
+apps/lansing_terminal/lansing_terminal.py
+apps/lansing_terminal/README.md
+apps/lansing_terminal/docs/lansing_terminal_manual.md
+apps/lansing_terminal/requirements.txt
+```
+
+Run from the terminal application directory:
+
+```powershell
+python -m pip install -r requirements.txt
+python lansing_terminal.py
+```
+
+Terminal behavior and naming decisions:
+
+- `ports` lists serial devices without requiring a board connection.
+- `connect <port>` handles transport failures as terminal errors instead of
+  allowing a Python traceback to terminate the interactive process.
+- `psu [on|off]` controls the high-voltage supply.
+- `psuc [on|off]` controls the PSU connection to the actuator path.
+- PSU and PSU-connection states are always presented as `on` or `off`; do not
+  restore the ambiguous `open`, `closed`, or generic `output` command language.
+- `-c` runs semicolon-separated commands and stops on the first handled error.
+- `-j`/`--json` emits newline-delimited JSON for commands, results, progress,
+  logs, and errors.
+- Actuator detection JSON contains numeric `delta_ma`, `baseline_ma`,
+  `forward_ma`, and `discharge_ma` fields.
+
+Target-current initialization automation is available on every supported
+command environment:
+
+```text
+apps/lansing_terminal/initialize_all.ps1
+apps/lansing_terminal/initialize_all.sh
+apps/lansing_terminal/initialize_all.bat
+apps/lansing_terminal/initialize_all.py
+```
+
+The PowerShell implementation is native. The `.sh` and `.bat` launchers use the
+shared Python implementation. All variants detect actuators, initialize while
+the baseline-to-forward current delta improves, continue past SDK `Ready` when
+the explicit target has not yet been reached, stop on a plateau or increase,
+enforce an attempt limit, summarize results, and turn the PSU connection and
+PSU off during cleanup unless explicitly configured otherwise.
+
+Documentation layout follows the dashboard pattern:
+
+- `apps/lansing_terminal/README.md` is the concise application overview and
+  quick start.
+- `apps/lansing_terminal/docs/lansing_terminal_manual.md` is the standalone
+  operator manual, complete command reference, JSON schema reference,
+  automation reference, and troubleshooting guide.
+
+Current SDK distribution version is `0.1.2`. Keep `pyproject.toml` and
+`fluid_reality.__version__` synchronized.
+
 ## Hardware Model
 
 The Lansing board controls up to 24 actuators.
@@ -452,9 +514,9 @@ Rules:
 
 - `PSC ON` is rejected if PSU is off.
 - Normal actuator writes require PSU on.
-- Normal actuator writes require PSU connected.
-- `INI` and `DIA` require PSU on and connected.
-- `OUT` does not require PSU on/connected; it is gated by `SAFE`.
+- Normal actuator writes require the PSU connection to be on.
+- `INI` and `DIA` require the PSU and PSU connection to be on.
+- `OUT` does not require the PSU or PSU connection to be on; it is gated by `SAFE`.
 
 ## Firmware Commands
 
@@ -523,7 +585,7 @@ It still applies:
 - max active time enforcement
 - automatic discharge
 - discharge lockout
-- PSU on/connected checks
+- PSU and PSU-connection on checks
 
 Stream mode should not intentionally drive the reverse electrode high during normal waveform samples.
 
@@ -706,4 +768,3 @@ Preserve these user decisions:
 - `OUT` is for bench testing and should remain safety-gated
 - `RST` resets runtimes
 - `RBT` reboots the board
-

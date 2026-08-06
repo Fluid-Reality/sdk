@@ -117,12 +117,12 @@ number.
 `Lansing(port)` opens the board connection. Use it as a context manager so the
 serial port closes cleanly when the script exits.
 
-The power supply and output connection are separate:
+The power supply and PSU connection to the actuator path are separate:
 
 - `board.power_supply(True)` turns on the high-voltage supply.
 - `board.voltage()` reads the measured supply voltage. A powered Lansing kit is
   typically around 215-220 V.
-- `board.connect_power(True)` connects the supply to the output path.
+- `board.connect_power(True)` turns on the PSU connection to the actuator path.
 - `board.current()` reads the current drawn by the system in milliamps.
 
 Actuators have SDK states:
@@ -180,6 +180,24 @@ running recovery, and starting square-wave output.
 
 See [apps/lansing_dashboard/README.md](apps/lansing_dashboard/README.md) for
 installation and usage instructions.
+
+## Terminal
+
+The repository includes a command-line terminal for connecting to a Lansing
+board, controlling the power supply and PSU connection, viewing telemetry and
+configuration, detecting and diagnosing actuators, running initialization and
+recovery, controlling actuator output, and operating square-wave tests. It
+supports interactive use, semicolon-separated command sequences, and
+newline-delimited JSON output for automation.
+
+The terminal directory also includes PowerShell, Linux/macOS shell, and Windows
+batch workflows for detecting actuators and initializing them to a target
+current delta while monitoring improvement and enforcing bounded stop
+conditions.
+
+See [apps/lansing_terminal/README.md](apps/lansing_terminal/README.md) for
+installation, the complete command reference, JSON schemas, automation options,
+and platform-specific usage instructions.
 
 ## Examples
 
