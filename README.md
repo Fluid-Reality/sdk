@@ -34,6 +34,22 @@ The exact name depends on the operating system:
 If more than one device is listed, unplug the board, run the command again,
 then plug it back in and look for the new entry.
 
+### Transparent simulator redirection
+
+Existing applications can be redirected to a Lansing simulator without code
+changes. Set `FLUID_REALITY_TRANSPORT` to a raw TCP endpoint before starting the
+application:
+
+```powershell
+$env:FLUID_REALITY_TRANSPORT="tcp://127.0.0.1:8765"
+```
+
+Every normal `Lansing(port)` connection in that process then uses the TCP
+endpoint instead of opening `port`. Unset the variable to restore physical
+serial operation. See
+[apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
+simulator command and platform-specific examples.
+
 ## Touch Validation Example
 
 This example powers the board, detects actuator `0`, initializes it if needed,

@@ -2,14 +2,111 @@
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from .errors import TransportError
 
 
+TRANSPORT_OVERRIDE_ENV = "FLUID_REALITY_TRANSPORT"
+
+
+class _SocketBackend:
+    """Raw TCP byte stream with the subset of pyserial used by the SDK."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        timeout: float,
+        write_timeout: float | None,
+    ) -> None:
+        parsed = urlparse(endpoint)
+        if parsed.scheme.lower() != "tcp" or parsed.hostname is None or parsed.port is None:
+            raise TransportError(
+                f"Invalid {TRANSPORT_OVERRIDE_ENV} value {endpoint!r}; "
+                "expected tcp://host:port"
+            )
+        if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+            raise TransportError(
+                f"Invalid TCP transport endpoint {endpoint!r}; "
+                "paths, parameters, queries, and fragments are not supported"
+            )
+
+        self.timeout = timeout
+        self.write_timeout = write_timeout
+        self._receive_buffer = bytearray()
+        try:
+            self._socket = socket.create_connection(
+                (parsed.hostname, parsed.port),
+                timeout=timeout,
+            )
+            self._socket.settimeout(timeout)
+        except (OSError, ValueError) as exc:
+            raise TransportError(
+                f"Could not connect to redirected transport {endpoint!r}: {exc}"
+            ) from exc
+
+    def write(self, data: bytes) -> None:
+        original_timeout = self._socket.gettimeout()
+        try:
+            self._socket.settimeout(self.write_timeout)
+            self._socket.sendall(data)
+        finally:
+            self._socket.settimeout(original_timeout)
+
+    def flush(self) -> None:
+        # TCP sendall() has already handed every byte to the operating system.
+        return None
+
+    def readline(self) -> bytes:
+        deadline = None if self.timeout is None else time.monotonic() + self.timeout
+        while True:
+            newline = self._receive_buffer.find(b"\n")
+            if newline >= 0:
+                end = newline + 1
+                line = bytes(self._receive_buffer[:end])
+                del self._receive_buffer[:end]
+                return line
+
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                return b""
+            self._socket.settimeout(remaining)
+            try:
+                chunk = self._socket.recv(4096)
+            except socket.timeout:
+                return b""
+            if not chunk:
+                raise ConnectionError("redirected transport closed the connection")
+            self._receive_buffer.extend(chunk)
+
+    def reset_input_buffer(self) -> None:
+        self._receive_buffer.clear()
+        original_timeout = self._socket.gettimeout()
+        try:
+            self._socket.setblocking(False)
+            while self._socket.recv(4096):
+                pass
+        except BlockingIOError:
+            pass
+        finally:
+            self._socket.settimeout(original_timeout)
+
+    def close(self) -> None:
+        self._socket.close()
+
+
 class SerialTransport:
-    """Line-oriented wrapper around pyserial."""
+    """Line-oriented transport with optional transparent TCP redirection.
+
+    When ``FLUID_REALITY_TRANSPORT`` is set to ``tcp://host:port``, traffic is
+    sent to that raw TCP byte stream instead of the serial port supplied by the
+    application. Existing ``Lansing(port)`` callers therefore need no changes.
+    """
 
     def __init__(
         self,
@@ -20,21 +117,33 @@ class SerialTransport:
         write_timeout: float | None = 1.0,
         **serial_kwargs: Any,
     ) -> None:
-        try:
-            import serial
-        except ImportError as exc:  # pragma: no cover - dependency metadata covers this.
-            raise TransportError("pyserial is required to use SerialTransport") from exc
+        override = os.environ.get(TRANSPORT_OVERRIDE_ENV)
+        self.port = port
+        self.endpoint = override or port
+        self.redirected = override is not None
 
-        try:
-            self._serial = serial.Serial(
-                port=port,
-                baudrate=baudrate,
+        if override is not None:
+            self._serial = _SocketBackend(
+                override,
                 timeout=timeout,
                 write_timeout=write_timeout,
-                **serial_kwargs,
             )
-        except Exception as exc:  # pragma: no cover - hardware dependent.
-            raise TransportError(f"Could not open serial port {port!r}: {exc}") from exc
+        else:
+            try:
+                import serial
+            except ImportError as exc:  # pragma: no cover - dependency metadata covers this.
+                raise TransportError("pyserial is required to use SerialTransport") from exc
+
+            try:
+                self._serial = serial.Serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    write_timeout=write_timeout,
+                    **serial_kwargs,
+                )
+            except Exception as exc:  # pragma: no cover - hardware dependent.
+                raise TransportError(f"Could not open serial port {port!r}: {exc}") from exc
 
     def write_line(self, line: str) -> None:
         self.write_bytes(f"{line}\n".encode("ascii"))
@@ -43,7 +152,7 @@ class SerialTransport:
         try:
             data = self._serial.readline()
         except Exception as exc:  # pragma: no cover - hardware dependent.
-            raise TransportError(f"Could not read from serial port: {exc}") from exc
+            raise TransportError(f"Could not read from transport: {exc}") from exc
         if not data:
             raise TransportError("Timed out waiting for firmware response")
         return data.decode("ascii", errors="replace").strip("\r\n")
@@ -53,13 +162,13 @@ class SerialTransport:
             self._serial.write(data)
             self._serial.flush()
         except Exception as exc:  # pragma: no cover - hardware dependent.
-            raise TransportError(f"Could not write to serial port: {exc}") from exc
+            raise TransportError(f"Could not write to transport: {exc}") from exc
 
     def reset_input_buffer(self) -> None:
         try:
             self._serial.reset_input_buffer()
         except Exception as exc:  # pragma: no cover - hardware dependent.
-            raise TransportError(f"Could not reset serial input buffer: {exc}") from exc
+            raise TransportError(f"Could not reset transport input buffer: {exc}") from exc
 
     def drain_lines(self, *, timeout: float = 0.05, max_lines: int = 50) -> tuple[str, ...]:
         lines: list[str] = []
@@ -72,7 +181,7 @@ class SerialTransport:
                     break
                 lines.append(data.decode("ascii", errors="replace").strip("\r\n"))
         except Exception as exc:  # pragma: no cover - hardware dependent.
-            raise TransportError(f"Could not drain serial input buffer: {exc}") from exc
+            raise TransportError(f"Could not drain transport input buffer: {exc}") from exc
         finally:
             self._serial.timeout = original_timeout
         return tuple(lines)
