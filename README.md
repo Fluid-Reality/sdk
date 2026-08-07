@@ -50,6 +50,17 @@ serial operation. See
 [apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
 simulator command and platform-specific examples.
 
+List physical serial ports together with the configured TCP endpoint:
+
+```python
+from fluid_reality import list_ports
+
+print(list_ports())
+# Example: ["COM1", "COM2", "tcp://127.0.0.1:8765"]
+```
+
+Every returned value can be passed directly to `Lansing(...)`.
+
 ## Touch Validation Example
 
 This example powers the board, detects actuator `0`, initializes it if needed,

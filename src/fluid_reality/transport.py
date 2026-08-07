@@ -14,6 +14,23 @@ from .errors import TransportError
 TRANSPORT_OVERRIDE_ENV = "FLUID_REALITY_TRANSPORT"
 
 
+def list_ports() -> list[str]:
+    """Return available OS serial ports plus the configured TCP endpoint."""
+
+    try:
+        from serial.tools import list_ports as serial_list_ports
+    except ImportError as exc:  # pragma: no cover - dependency metadata covers this.
+        raise TransportError("pyserial is required to list serial ports") from exc
+
+    ports = [item.device for item in serial_list_ports.comports()]
+    override = os.environ.get(TRANSPORT_OVERRIDE_ENV)
+    if override:
+        parsed = urlparse(override)
+        if parsed.scheme.lower() == "tcp" and override not in ports:
+            ports.append(override)
+    return ports
+
+
 class _SocketBackend:
     """Raw TCP byte stream with the subset of pyserial used by the SDK."""
 
@@ -118,13 +135,14 @@ class SerialTransport:
         **serial_kwargs: Any,
     ) -> None:
         override = os.environ.get(TRANSPORT_OVERRIDE_ENV)
+        selected_endpoint = port if port.lower().startswith("tcp://") else override
         self.port = port
-        self.endpoint = override or port
-        self.redirected = override is not None
+        self.endpoint = selected_endpoint or port
+        self.redirected = selected_endpoint is not None
 
-        if override is not None:
+        if selected_endpoint is not None:
             self._serial = _SocketBackend(
-                override,
+                selected_endpoint,
                 timeout=timeout,
                 write_timeout=write_timeout,
             )

@@ -346,7 +346,7 @@ Documentation layout follows the dashboard pattern:
   operator manual, complete command reference, JSON schema reference,
   automation reference, and troubleshooting guide.
 
-Current SDK distribution version is `0.1.2`. Keep `pyproject.toml` and
+Current SDK distribution version is `0.1.3`. Keep `pyproject.toml` and
 `fluid_reality.__version__` synchronized.
 
 ## Hardware Model

@@ -10,6 +10,7 @@ from .boards.lansing import (
     ManualOutput,
 )
 from .errors import ErrorInfo, FirmwareError, FluidRealityError, ProtocolError, TransportError
+from .transport import list_ports
 
 __all__ = [
     "Diagnosis",
@@ -24,6 +25,7 @@ __all__ = [
     "ManualOutput",
     "ProtocolError",
     "TransportError",
+    "list_ports",
 ]
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
