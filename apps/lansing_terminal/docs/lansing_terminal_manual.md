@@ -10,7 +10,7 @@ The terminal can:
 - discover serial ports and connect to a Lansing controller;
 - control the high-voltage power supply and its connection to the actuator path;
 - read voltage, current, configuration, status, and runtime counters;
-- detect, diagnose, initialize, and recover actuators;
+- detect, diagnose, initialize, fast-initialize, and recover actuators;
 - drive normal actuator output through firmware safety controls;
 - perform advanced raw positive/negative manual-output tests;
 - run a continuous square-wave test in a background thread;
@@ -51,9 +51,11 @@ controls.
   changing the physical setup.
 - Detect an actuator before normal operation.
 - Use `set` and `square` only when the actuator state is `Ready`.
-- If detection reports `Error`, use `initialize` before normal operation.
+- If detection reports `Error`, use `init` or `fast_init` before normal
+  operation.
 - Use `recover` only as an advanced conditioning procedure when ordinary
-  initialization is insufficient or a controlled bench procedure requires it.
+  initialization or Fast Init is insufficient or a controlled bench procedure
+  requires it.
 - `manual set` is raw electrode control. It bypasses the normal actuator state
   workflow and is intended only for qualified bench/debug use.
 - Do not leave firmware manual-output safety disabled.
@@ -212,7 +214,7 @@ semicolons inside one shell-quoted argument.
 
 ```bash
 python lansing_terminal.py -c "ports"
-python lansing_terminal.py --port /dev/ttyACM0 -c "psu on; psuc on; detect 0; states group 0"
+python lansing_terminal.py --port /dev/ttyACM0 -c "psu on; psuc on; detect; states group 0"
 ```
 
 In text mode, the terminal echoes each command with its current prompt. In JSON
@@ -243,7 +245,7 @@ summary.
 Scripted mode is intended for shell scripts and repeatable bench sequences:
 
 ```powershell
-python lansing_terminal.py --port COM6 -c "psu on; psuc on; detect 0; diagnose 0"
+python lansing_terminal.py --port COM6 -c "psu on; psuc on; detect; diagnose 0"
 ```
 
 It is fail-fast. Any terminal, SDK, firmware, validation, or operating-system
@@ -370,23 +372,32 @@ limits specified for the hardware being tested.
 ### 3. Detect the actuator
 
 ```text
-lansing> detect 0
+lansing> detect
 ```
 
 Interpret the result:
 
 - `Ready`: normal output is available.
-- `Error`: run `initialize 0`, then inspect the final detection.
+- `Error`: run `init 0` or `fast_init 0`, then inspect the final detection.
 - `Not connected`: keep it off and inspect the physical connection.
 
 ### 4. Initialize when necessary
 
 ```text
-lansing> initialize 0
+lansing> init 0
 ```
 
 Initialization takes about two minutes with the default SDK stages. It reports
 progress and performs a final diagnosis automatically.
+
+Fast Init is available as an alternate initialization method when a shorter,
+adaptive target-current process is preferred:
+
+```text
+lansing> fast_init 0 2.0
+```
+
+The target must be below the `3.0 mA` Error threshold.
 
 ### 5. Run a controlled pulse
 
@@ -441,7 +452,7 @@ In JSON mode, the result is either:
 or:
 
 ```json
-{"event":"help","topic":"detect","text":"detect <actuator>|group <0|1|2>..."}
+{"event":"help","topic":"detect","text":"detect [<actuator>|group <0|1|2>]..."}
 ```
 
 ### `ports`
@@ -691,12 +702,14 @@ JSON example:
 ### `detect`
 
 ```text
+detect
 detect <actuator>
 detect group <0|1|2>
 ```
 
-Runs the SDK detection workflow for one actuator or all eight actuators in a
-group.
+Runs the SDK detection workflow for group 0, one actuator, or all eight
+actuators in a selected group. With no arguments, `detect` runs group 0,
+covering actuators `0-7`.
 
 For each actuator, the SDK:
 
@@ -710,6 +723,7 @@ For each actuator, the SDK:
 Examples:
 
 ```text
+detect
 detect 0
 detect group 0
 detect group 2
@@ -757,10 +771,10 @@ Example:
 diagnose 0
 ```
 
-### `initialize`
+### `init`
 
 ```text
-initialize <actuator>
+init <actuator>
 ```
 
 Runs the SDK's staged actuator initialization/conditioning sequence and then
@@ -800,6 +814,73 @@ Completion produces:
 
 followed by the full actuator detection object.
 
+### `fast_init`
+
+```text
+fast_init <actuator> [target_ma]
+```
+
+Runs adaptive Fast Init on one detected actuator. The optional target is a
+current delta in milliamps. It defaults to `2.0 mA` and must be greater than
+zero and strictly below the SDK Error threshold of `3.0 mA`.
+
+Examples:
+
+```text
+fast_init 0
+fast_init 0 2.0
+fast_init 7 1.5
+```
+
+Prerequisites:
+
+- the board is connected;
+- the PSU is on and the PSU connection is on;
+- the actuator has already been detected;
+- its state is `Ready` or `Error`, not `Unknown` or `Not connected`;
+- measured PSU voltage is greater than zero.
+
+The process temporarily disables manual-output safety, drives a 1 Hz bipolar
+manual square wave, and restores safety in cleanup. It starts at the measured
+maximum PSU voltage. After each positive/negative cycle, it compares the
+measured baseline-to-forward current delta with the target:
+
+| Current-delta error | Voltage step |
+| ---: | ---: |
+| `0` through `0.2 mA` | `5 V` |
+| greater than `0.2 mA` through `1.0 mA` | `10 V` |
+| greater than `1.0 mA` | `20 V` |
+
+When the measured delta is above the target, Fast Init lowers the drive
+voltage by the step. When the measured delta is below the target, it raises the
+drive voltage by the step.
+
+The process ends with:
+
+- success: the actuator is running at maximum voltage and the current delta is
+  at or below the target;
+- failure: the process runs longer than 60 seconds.
+
+After Fast Init stops, the terminal diagnoses the actuator again and emits the
+normal structured actuator result.
+
+Text progress example:
+
+```text
+Fast Init 0: 12/60s, delta 2.34 mA, target 2.00 mA, drive 185 V, reducing.
+```
+
+JSON records include `fast_init_started`, `fast_init_progress`, and
+`fast_init_complete`:
+
+```json
+{"event":"fast_init_progress","actuator":0,"elapsed_s":12.1,"duration_s":60.0,"target_delta_ma":2.0,"target_voltage_v":185.0,"next_voltage_v":175.0,"supply_voltage_v":218.0,"baseline_ma":0.82,"forward_ma":3.16,"reverse_ma":2.91,"delta_ma":2.34,"error_ma":0.34,"step_v":10.0,"status":"reducing"}
+```
+
+```json
+{"event":"fast_init_complete","success":true,"final_state":"Ready","actuator":0,"delta_ma":1.82,"target_delta_ma":2.0,"target_voltage_v":218.0,"status":"success"}
+```
+
 ### `recover`
 
 ```text
@@ -825,23 +906,18 @@ recover 0 100 90
 The procedure:
 
 1. measures supply voltage and baseline current;
-2. scales the requested recovery voltage to a raw `0–255` output value;
+2. scales the requested recovery voltage from the measured supply voltage;
 3. records the current manual-output safety state;
 4. disables safety when it was previously enabled;
-5. alternates positive and negative raw output every 0.5 seconds;
+5. alternates positive and negative manual drive every 0.5 seconds;
 6. samples current repeatedly and reports current delta once per second;
 7. commands both manual electrodes to zero;
 8. restores the previous safety state; and
 9. reports average recovery current and its delta from baseline.
 
-Scaling is based on measured supply voltage:
-
-```text
-raw_value = int(255 × requested_voltage / measured_supply_voltage)
-```
-
-The raw value is clamped to `1–255`. For example, a 100 V target with a 200 V
-supply produces approximately `127`.
+Scaling is based on measured supply voltage. For example, a 100 V target with
+a 200 V supply drives approximately half of the available supply voltage in
+each direction.
 
 The command requires positive voltage and duration values and measured PSU
 voltage above zero. The terminal does not automatically reclassify the actuator
@@ -1203,9 +1279,10 @@ example, scripted detection produces a `command` record, a
 | Configuration | `event="config"`, configuration fields | `config` |
 | Safety | `event="safety"`, `enabled` | `safety` |
 | Detection start | `event="detection_started"`, `actuator` | `detect` |
-| Detection result | `actuator`, `state`, four current fields | `detect`, `diagnose`, `initialize` |
-| Initialization progress | `event="initialization_progress"`, timing and stage fields | `initialize` |
-| Initialization complete | `event="initialization_complete"`, `actuator`, `state` | `initialize` |
+| Detection result | `actuator`, `state`, four current fields | `detect`, `diagnose`, `init`, `fast_init` |
+| Initialization progress | `event="initialization_progress"`, timing and stage fields | `init` |
+| Initialization complete | `event="initialization_complete"`, `actuator`, `state` | `init` |
+| Fast Init start/progress/complete | `event="fast_init_*"`, target, voltage, current, and result fields | `fast_init` |
 | Recovery start/progress/complete | `event="recovery_*"`, procedure measurements | `recover` |
 | Actuator output | `event="actuator_output"`, `actuator`, `value` | `set` |
 | Actuator off | `event="actuators_off"`, `actuator` | `off` |
@@ -1329,10 +1406,11 @@ test "${PIPESTATUS[0]}" -eq 0
 ### Detect an entire group
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "psu on; psuc on; detect group 0"
+python lansing_terminal.py -j --port COM6 -c "psu on; psuc on; detect"
 ```
 
-The terminal emits eight separate detection results rather than one array.
+Bare `detect` is equivalent to `detect group 0`. The terminal emits eight
+separate detection results rather than one array.
 
 ### Initialize actuators to a target current delta
 
@@ -1395,7 +1473,7 @@ For each actuator, the workflow is:
 5. If it is `Ready` and its delta is already at or below the target, report
    `Target reached` without initializing it.
 6. If its delta is above target, run a new terminal process containing `detect
-   <actuator>; initialize <actuator>`.
+   <actuator>; init <actuator>`.
 7. Read the final post-initialization detection record.
 8. Continue even if the SDK now reports `Ready` when the delta is still above
    the requested target.
@@ -1409,7 +1487,7 @@ For each actuator, the workflow is:
 
 Detection and initialization intentionally run in the same terminal process on
 each attempt. Every new SDK object starts with the actuator in `Unknown` state,
-while `initialize` requires a preceding detection.
+while `init` requires a preceding detection.
 
 #### Stop conditions
 
@@ -1858,7 +1936,7 @@ The measured current delta exceeded `3.0 mA`. Do not use normal output. Run the
 staged initialization workflow:
 
 ```text
-initialize 0
+init 0
 ```
 
 If the final diagnosis remains in `Error`, inspect the physical setup and use

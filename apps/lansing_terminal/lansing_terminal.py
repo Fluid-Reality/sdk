@@ -513,13 +513,18 @@ class LansingTerminal(cmd.Cmd):
         )
 
     def do_detect(self, arg: str) -> None:
-        """detect <actuator>|group <0|1|2>
+        """detect [<actuator>|group <0|1|2>]
 
         Run SDK detection. Detection turns the actuator group off, diagnoses
-        current delta, and records Ready, Error, or Not connected state.
+        current delta, and records Ready, Error, or Not connected state. With
+        no arguments, detects group 0.
         """
 
         parts = shlex.split(arg)
+        if not parts:
+            for actuator in range(0, 8):
+                self._detect_one(actuator)
+            return
         if len(parts) == 1:
             actuator = parse_actuator(parts[0])
             self._detect_one(actuator)
@@ -531,7 +536,7 @@ class LansingTerminal(cmd.Cmd):
             for actuator in range(group * 8, group * 8 + 8):
                 self._detect_one(actuator)
             return
-        raise ValueError("Usage: detect <actuator>|group <0|1|2>")
+        raise ValueError("Usage: detect [<actuator>|group <0|1|2>]")
 
     def do_diagnose(self, arg: str) -> None:
         """diagnose <actuator>
@@ -546,14 +551,14 @@ class LansingTerminal(cmd.Cmd):
             detection = board.classify_diagnosis(diagnosis)
         self._print_detection(detection)
 
-    def do_initialize(self, arg: str) -> None:
-        """initialize <actuator>
+    def do_init(self, arg: str) -> None:
+        """init <actuator>
 
         Run the staged initialization sequence, then diagnose. Use this first
         when an actuator is in Error state.
         """
 
-        actuator = self._single_actuator(arg, "initialize <actuator>")
+        actuator = self._single_actuator(arg, "init <actuator>")
 
         def progress(data: dict[str, float | int]) -> None:
             elapsed = float(data["elapsed_s"])
@@ -595,6 +600,179 @@ class LansingTerminal(cmd.Cmd):
         if detection is not None:
             self._print_detection(detection)
 
+    def do_fast_init(self, arg: str) -> None:
+        """fast_init <actuator> [target_ma=2.0]
+
+        Run adaptive fast initialization. The target must be greater than 0
+        and below the Error threshold of 3.0 mA.
+        """
+
+        parts = shlex.split(arg)
+        if not 1 <= len(parts) <= 2:
+            raise ValueError("Usage: fast_init <actuator> [target_ma=2.0]")
+        actuator = parse_actuator(parts[0])
+        target_delta_ma = float(parts[1]) if len(parts) == 2 else 2.0
+        if not 0 < target_delta_ma < Lansing.error_delta_ma:
+            raise ValueError(
+                f"Fast Init target must be greater than 0 and below "
+                f"{Lansing.error_delta_ma:.1f} mA."
+            )
+
+        with self._lock:
+            board = self._require_board()
+            actuator_state = board.actuator_state(actuator)
+            if actuator_state is ActuatorState.UNKNOWN:
+                raise RuntimeError(f"Actuator {actuator} is Unknown; run detect {actuator} first.")
+            if actuator_state is ActuatorState.NOT_CONNECTED:
+                raise RuntimeError(f"Actuator {actuator} is not connected.")
+            supply_voltage = board.voltage()
+            if supply_voltage <= 0:
+                raise RuntimeError("Cannot fast initialize: measured PSU voltage is 0 V.")
+            previous_safety = board.safety()
+
+        max_duration_s = 60.0
+        target_voltage = float(supply_voltage)
+        start = time.monotonic()
+        last_progress_second = -1
+        last_result: dict[str, float | int | str] | None = None
+        success = False
+        status_text = "failed"
+
+        self._emit(
+            f"Fast Init actuator {actuator}: target {target_delta_ma:.2f} mA, "
+            f"max duration {int(max_duration_s)} s, starting at {supply_voltage:.1f} V.",
+            event="fast_init_started",
+            actuator=actuator,
+            target_delta_ma=target_delta_ma,
+            duration_s=max_duration_s,
+            supply_voltage_v=supply_voltage,
+        )
+
+        try:
+            with self._lock:
+                board = self._require_board()
+                if previous_safety:
+                    board.safety(False)
+            while True:
+                elapsed_s = time.monotonic() - start
+                if elapsed_s > max_duration_s:
+                    status_text = "failed"
+                    break
+
+                drive_voltage = target_voltage
+                output_value = self._voltage_to_output_allow_zero(drive_voltage, supply_voltage)
+                with self._lock:
+                    board = self._require_board()
+                    board.set_manual_output(actuator, 0, 0)
+                time.sleep(0.05)
+                with self._lock:
+                    baseline_ma = self._require_board().current()
+
+                with self._lock:
+                    self._require_board().set_manual_output(actuator, output_value, 0)
+                time.sleep(0.5)
+                with self._lock:
+                    forward_ma = self._require_board().current()
+                delta_ma = abs(forward_ma - baseline_ma)
+
+                with self._lock:
+                    self._require_board().set_manual_output(actuator, 0, output_value)
+                time.sleep(0.5)
+                with self._lock:
+                    reverse_ma = self._require_board().current()
+
+                error_ma = abs(delta_ma - target_delta_ma)
+                step_v = self._fast_init_step_v(error_ma)
+                at_max_voltage = output_value >= Lansing.max_output
+                if at_max_voltage and delta_ma <= target_delta_ma:
+                    success = True
+                    status_text = "success"
+                elif delta_ma > target_delta_ma:
+                    target_voltage = max(0.0, target_voltage - step_v)
+                    status_text = "reducing"
+                elif delta_ma < target_delta_ma:
+                    target_voltage = min(float(supply_voltage), target_voltage + step_v)
+                    status_text = "raising"
+                else:
+                    status_text = "holding"
+
+                elapsed_s = time.monotonic() - start
+                result = {
+                    "actuator": actuator,
+                    "elapsed_s": min(elapsed_s, max_duration_s),
+                    "duration_s": max_duration_s,
+                    "target_delta_ma": target_delta_ma,
+                    "target_voltage_v": drive_voltage,
+                    "next_voltage_v": target_voltage,
+                    "supply_voltage_v": supply_voltage,
+                    "baseline_ma": baseline_ma,
+                    "forward_ma": forward_ma,
+                    "reverse_ma": reverse_ma,
+                    "delta_ma": delta_ma,
+                    "error_ma": error_ma,
+                    "step_v": step_v,
+                    "status": status_text,
+                }
+                last_result = result
+                whole_second = int(elapsed_s)
+                if whole_second > last_progress_second or success:
+                    self._emit(
+                        "Fast Init {actuator}: {elapsed_s:.0f}/{duration_s:.0f}s, "
+                        "delta {delta_ma:.2f} mA, target {target_delta_ma:.2f} mA, "
+                        "drive {target_voltage_v:.0f} V, {status}.".format(
+                            **result
+                        ),
+                        event="fast_init_progress",
+                        **result,
+                    )
+                    last_progress_second = whole_second
+                if success:
+                    break
+        finally:
+            with self._lock:
+                board = self._require_board()
+                try:
+                    board.set_manual_output(actuator, 0, 0)
+                finally:
+                    board.safety(previous_safety)
+
+        detection = None
+        with self._lock:
+            board = self._require_board()
+            diagnosis = board.diagnose_actuator(actuator)
+            detection = board.classify_diagnosis(diagnosis)
+
+        if last_result is None:
+            last_result = {
+                "actuator": actuator,
+                "elapsed_s": max_duration_s,
+                "duration_s": max_duration_s,
+                "target_delta_ma": target_delta_ma,
+                "target_voltage_v": target_voltage,
+                "next_voltage_v": target_voltage,
+                "supply_voltage_v": supply_voltage,
+                "baseline_ma": 0.0,
+                "forward_ma": 0.0,
+                "reverse_ma": 0.0,
+                "delta_ma": 0.0,
+                "error_ma": 0.0,
+                "step_v": 0.0,
+                "status": status_text,
+            }
+        self._emit(
+            "Fast Init {actuator} {outcome}: final delta {delta_ma:.2f} mA, "
+            "drive {target_voltage_v:.0f} V, SDK state {final_state}.".format(
+                outcome="succeeded" if success else "failed",
+                final_state=detection.state.value,
+                **last_result,
+            ),
+            event="fast_init_complete",
+            success=success,
+            final_state=detection.state.value,
+            **last_result,
+        )
+        self._print_detection(detection)
+
     def do_recover(self, arg: str) -> None:
         """recover <actuator> [voltage=50] [duration_s=60]
 
@@ -625,12 +803,11 @@ class LansingTerminal(cmd.Cmd):
 
         self._emit(
             f"Recovering actuator {actuator} at +/-{target_voltage:.1f} V for {duration_s}s "
-            f"(raw {output_value}/255 from {supply_voltage:.1f} V PSU).",
+            f"from {supply_voltage:.1f} V PSU.",
             event="recovery_started",
             actuator=actuator,
             target_voltage_v=target_voltage,
             duration_s=duration_s,
-            output_value=output_value,
             supply_voltage_v=supply_voltage,
         )
         samples: list[float] = []
@@ -664,7 +841,8 @@ class LansingTerminal(cmd.Cmd):
                 if whole_second >= next_report_second:
                     self._emit(
                         f"Recovery {actuator}: {whole_second}/{duration_s}s, "
-                        f"current {current_ma:.2f} mA, delta {delta_ma:.2f} mA",
+                        f"current {current_ma:.2f} mA, delta {delta_ma:.2f} mA "
+                        f"at {target_voltage:.1f} V",
                         event="recovery_progress",
                         actuator=actuator,
                         elapsed_s=whole_second,
@@ -1061,11 +1239,11 @@ class LansingTerminal(cmd.Cmd):
                 self.board = None
                 self.connected_port = None
 
-    def _emit(self, text: str, **payload: object) -> None:
+    def _emit(self, display_text: str, **payload: object) -> None:
         if self.json_output:
             print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         else:
-            print(text)
+            print(display_text)
 
     def _debug(self, line: str) -> None:
         self.log_lines.append(line)
@@ -1093,6 +1271,21 @@ class LansingTerminal(cmd.Cmd):
     def _voltage_to_output(target_voltage: float, supply_voltage: float) -> int:
         ratio = min(target_voltage / supply_voltage, 1.0)
         return max(1, min(Lansing.max_output, int(Lansing.max_output * ratio)))
+
+    @staticmethod
+    def _voltage_to_output_allow_zero(target_voltage: float, supply_voltage: float) -> int:
+        if target_voltage <= 0 or supply_voltage <= 0:
+            return 0
+        ratio = min(target_voltage / supply_voltage, 1.0)
+        return max(0, min(Lansing.max_output, round(Lansing.max_output * ratio)))
+
+    @staticmethod
+    def _fast_init_step_v(error_ma: float) -> float:
+        if error_ma <= 0.2:
+            return 5.0
+        if error_ma <= 1.0:
+            return 10.0
+        return 20.0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -19,6 +19,8 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 - Detect individual actuators or eight-actuator groups.
 - Show `Unknown`, `Ready`, `Error`, and `Not connected` actuator states.
 - Diagnose, initialize, and recover actuators.
+- Run adaptive Fast Init with a configurable current-delta target below the
+  `3.0 mA` Error threshold.
 - Control normal actuator output through SDK and firmware safety checks.
 - Perform advanced positive/negative manual-output bench tests.
 - Run continuous square-wave tests with firmware discharge confirmation.
@@ -74,8 +76,14 @@ lansing> psu on
 lansing> voltage
 lansing> psuc on
 lansing> current
-lansing> detect 0
+lansing> detect
+lansing> init 0
+lansing> fast_init 0 2.0
 ```
+
+Use `init <actuator>` for the staged SDK initialization workflow. Use
+`fast_init <actuator> [target_ma]` for adaptive Fast Init.
+Use bare `detect` to detect the standard group 0 actuator range, `0-7`.
 
 Connect during startup:
 
@@ -87,7 +95,7 @@ Run a fail-fast command sequence:
 
 ```powershell
 python lansing_terminal.py --port COM6 `
-    -c "psu on; psuc on; detect 0; diagnose 0"
+    -c "psu on; psuc on; detect; fast_init 0 2.0; diagnose 0"
 ```
 
 Emit newline-delimited JSON:

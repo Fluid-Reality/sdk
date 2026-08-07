@@ -231,7 +231,7 @@ Recovery parameters:
 | Voltage | `50.0 V` | Target positive and negative recovery voltage. |
 | Duration | `60 s` | Total recovery time. |
 
-The dashboard scales the recovery output from the measured power-supply voltage. The measured PSU voltage is treated as raw output value `255`. For example, if the PSU reads `200 V` and recovery is set to `100 V`, the dashboard sends approximately raw value `127` in the positive direction and raw value `127` in the negative direction.
+The dashboard scales recovery from the measured power-supply voltage. For example, if the PSU reads `200 V` and recovery is set to `100 V`, the dashboard drives approximately half of the available supply voltage in the positive direction and half in the negative direction.
 
 To run recovery:
 

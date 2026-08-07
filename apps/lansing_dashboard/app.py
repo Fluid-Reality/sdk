@@ -82,6 +82,8 @@ class BoardWorker(QThread):
     status_ready = Signal(dict)
     diagnosis_ready = Signal(dict)
     initialization_progress = Signal(dict)
+    fast_init_progress = Signal(dict)
+    fast_init_ready = Signal(dict)
     recovery_ready = Signal(dict)
     recovery_progress = Signal(dict)
     health_ready = Signal(int, object)
@@ -137,6 +139,8 @@ class BoardWorker(QThread):
                     self._emit_status()
                 elif command == "init":
                     self._initialize_actuator(int(args[0]))
+                elif command == "fast_init":
+                    self._fast_initialize_actuator(int(args[0]), float(args[1]))
                 elif command == "diagnose":
                     self._diagnose_actuator(int(args[0]))
                 elif command == "recover":
@@ -262,6 +266,166 @@ class BoardWorker(QThread):
         self.busy_changed.emit("")
         self._emit_status()
 
+    def _fast_initialize_actuator(self, actuator: int, target_delta_ma: float) -> None:
+        self._ensure_actuator_recoverable(actuator)
+        if not 0 < target_delta_ma < Lansing.error_delta_ma:
+            raise ValueError(
+                f"Fast Init target must be greater than 0 and below "
+                f"{Lansing.error_delta_ma:.1f} mA."
+            )
+        board = self._require_board()
+        if self._square_actuators:
+            self._stop_square_wave()
+
+        max_duration_s = 60.0
+        supply_voltage = board.voltage()
+        if supply_voltage <= 0:
+            raise RuntimeError("Cannot fast initialize: measured PSU voltage is 0 V.")
+
+        self.busy_changed.emit(f"Fast initializing actuator {actuator}")
+        self.message.emit(
+            f"Fast Init actuator {actuator}: target {target_delta_ma:.2f} mA, "
+            "1 Hz bipolar manual drive, adaptive voltage control.",
+            "warn",
+        )
+
+        previous_safety = board.safety()
+        target_voltage = float(supply_voltage)
+        start = time.monotonic()
+        last_progress_second = -1
+        last_result: dict[str, Any] | None = None
+        success = False
+        status_text = "failed"
+
+        try:
+            if previous_safety:
+                board.safety(False)
+            while True:
+                elapsed_s = time.monotonic() - start
+                if elapsed_s > max_duration_s:
+                    status_text = "failed"
+                    break
+
+                drive_voltage = target_voltage
+                output_value = self._voltage_to_output_allow_zero(drive_voltage, supply_voltage)
+                board.set_manual_output(actuator, 0, 0)
+                time.sleep(0.05)
+                baseline_ma = board.current()
+
+                board.set_manual_output(actuator, output_value, 0)
+                time.sleep(0.5)
+                forward_ma = board.current()
+                delta_ma = abs(forward_ma - baseline_ma)
+
+                board.set_manual_output(actuator, 0, output_value)
+                time.sleep(0.5)
+                reverse_ma = board.current()
+
+                error_ma = abs(delta_ma - target_delta_ma)
+                step_v = self._fast_init_step_v(error_ma)
+                at_max_voltage = output_value >= Lansing.max_output
+                if at_max_voltage and delta_ma <= target_delta_ma:
+                    success = True
+                    status_text = "success"
+                elif delta_ma > target_delta_ma:
+                    target_voltage = max(0.0, target_voltage - step_v)
+                    status_text = "reducing"
+                elif delta_ma < target_delta_ma:
+                    target_voltage = min(float(supply_voltage), target_voltage + step_v)
+                    status_text = "raising"
+                else:
+                    status_text = "holding"
+
+                elapsed_s = time.monotonic() - start
+                result = {
+                    "actuator": actuator,
+                    "elapsed_s": min(elapsed_s, max_duration_s),
+                    "duration_s": max_duration_s,
+                    "target_delta_ma": target_delta_ma,
+                    "target_voltage": drive_voltage,
+                    "next_voltage": target_voltage,
+                    "supply_voltage": supply_voltage,
+                    "baseline_ma": baseline_ma,
+                    "forward_ma": forward_ma,
+                    "reverse_ma": reverse_ma,
+                    "delta_ma": delta_ma,
+                    "error_ma": error_ma,
+                    "step_v": step_v,
+                    "status": status_text,
+                }
+                last_result = result
+                whole_second = int(elapsed_s)
+                if whole_second > last_progress_second or success:
+                    self.fast_init_progress.emit(result)
+                    self.message.emit(
+                        "Fast Init {actuator}: {elapsed_s:.0f}/{duration_s:.0f}s, "
+                        "delta {delta_ma:.2f} mA, target {target_delta_ma:.2f} mA, "
+                        "drive {target_voltage:.0f} V, {status}.".format(
+                            **result
+                        ),
+                        "ok" if success else "info",
+                    )
+                    last_progress_second = whole_second
+                if success:
+                    break
+        finally:
+            try:
+                board.set_manual_output(actuator, 0, 0)
+            finally:
+                board.safety(previous_safety)
+
+        detection = None
+        try:
+            diagnosis = board.diagnose_actuator(actuator)
+            detection = board.classify_diagnosis(diagnosis)
+            health = self._health_from_detection(detection)
+            self._actuator_health[actuator] = health
+            self.health_ready.emit(actuator // 8, {actuator: health})
+            self.diagnosis_ready.emit(
+                {
+                    "actuator": diagnosis.actuator,
+                    "baseline_ma": diagnosis.baseline_ma,
+                    "forward_ma": diagnosis.forward_ma,
+                    "discharge_ma": diagnosis.discharge_ma,
+                }
+            )
+        except Exception as exc:
+            self.message.emit(f"Fast Init post-diagnosis failed: {exc}", "error")
+
+        if last_result is None:
+            last_result = {
+                "actuator": actuator,
+                "elapsed_s": max_duration_s,
+                "duration_s": max_duration_s,
+                "target_delta_ma": target_delta_ma,
+                "target_voltage": target_voltage,
+                "next_voltage": target_voltage,
+                "supply_voltage": supply_voltage,
+                "baseline_ma": 0.0,
+                "forward_ma": 0.0,
+                "reverse_ma": 0.0,
+                "delta_ma": 0.0,
+                "error_ma": 0.0,
+                "step_v": 0.0,
+                "status": status_text,
+            }
+        last_result = dict(last_result)
+        last_result["success"] = success
+        last_result["final_state"] = (
+            str(detection.state.value) if detection is not None else "Unknown"
+        )
+        self.fast_init_ready.emit(last_result)
+        self.message.emit(
+            "Fast Init {actuator} {outcome}: final delta {delta_ma:.2f} mA, "
+            "drive {target_voltage:.0f} V, SDK state {final_state}.".format(
+                outcome="succeeded" if success else "failed",
+                **last_result,
+            ),
+            "ok" if success else "error",
+        )
+        self.busy_changed.emit("")
+        self._emit_status()
+
     def _diagnose_actuator(self, actuator: int) -> None:
         self._ensure_actuator_diagnosable(actuator)
         board = self._require_board()
@@ -302,7 +466,7 @@ class BoardWorker(QThread):
         self.busy_changed.emit(f"Recovering actuator {actuator}")
         self.message.emit(
             f"Recovering actuator {actuator} at +/-{target_voltage:.1f} V "
-            f"for {duration_s}s using raw {output_value}/255 from {supply_voltage:.1f} V PSU.",
+            f"for {duration_s}s from {supply_voltage:.1f} V PSU.",
             "warn",
         )
         duration_s_float = float(duration_s)
@@ -539,6 +703,21 @@ class BoardWorker(QThread):
     def _voltage_to_output(target_voltage: float, supply_voltage: float) -> int:
         ratio = min(target_voltage / supply_voltage, 1.0)
         return max(1, min(Lansing.max_output, int(Lansing.max_output * ratio)))
+
+    @staticmethod
+    def _voltage_to_output_allow_zero(target_voltage: float, supply_voltage: float) -> int:
+        if target_voltage <= 0 or supply_voltage <= 0:
+            return 0
+        ratio = min(target_voltage / supply_voltage, 1.0)
+        return max(0, min(Lansing.max_output, round(Lansing.max_output * ratio)))
+
+    @staticmethod
+    def _fast_init_step_v(error_ma: float) -> float:
+        if error_ma <= 0.2:
+            return 5.0
+        if error_ma <= 1.0:
+            return 10.0
+        return 20.0
 
     def _service_square_wave(self) -> None:
         if self._board is None or not self._square_actuators:
@@ -842,6 +1021,13 @@ class ActuatorCard(QFrame):
             self.state.set("Detecting", "active")
             self.value.setText("checking...")
             self.runtime.setText("diagnostic running")
+        elif state == "fast_init":
+            self.setProperty("state", "detecting")
+            self.state.set("Fast Init", "active")
+            delta = float(self._health.get("delta_ma", 0.0))
+            voltage = float(self._health.get("target_voltage", 0.0))
+            self.value.setText(f"delta {delta:.2f} mA")
+            self.runtime.setText(f"drive {voltage:.0f} V")
         elif state == "disconnected":
             self.setProperty("state", "disconnected")
             self.state.set("Not connected", "neutral")
@@ -899,6 +1085,8 @@ class DashboardWindow(QMainWindow):
         self.worker.status_ready.connect(self._on_status_ready)
         self.worker.diagnosis_ready.connect(self._on_diagnosis_ready)
         self.worker.initialization_progress.connect(self._on_initialization_progress)
+        self.worker.fast_init_progress.connect(self._on_fast_init_progress)
+        self.worker.fast_init_ready.connect(self._on_fast_init_ready)
         self.worker.recovery_ready.connect(self._on_recovery_ready)
         self.worker.recovery_progress.connect(self._on_recovery_progress)
         self.worker.health_ready.connect(self._on_health_ready)
@@ -1098,6 +1286,38 @@ class DashboardWindow(QMainWindow):
         init_layout.addWidget(self.init_elapsed_label)
         init_layout.addStretch()
 
+        fast_init_tab = QWidget()
+        fast_init_layout = QHBoxLayout(fast_init_tab)
+        fast_init_layout.setContentsMargins(10, 10, 10, 10)
+        fast_init_layout.setSpacing(10)
+        self.fast_init_btn = QPushButton("Fast Init")
+        self.fast_init_btn.clicked.connect(
+            lambda: self.worker.enqueue(
+                "fast_init",
+                self._selected_actuator,
+                self.fast_init_target_spin.value(),
+            )
+        )
+        fast_init_layout.addWidget(QLabel("Target"))
+        self.fast_init_target_spin = QDoubleSpinBox()
+        self.fast_init_target_spin.setRange(0.01, Lansing.error_delta_ma - 0.01)
+        self.fast_init_target_spin.setDecimals(2)
+        self.fast_init_target_spin.setSingleStep(0.10)
+        self.fast_init_target_spin.setValue(2.00)
+        self.fast_init_target_spin.setSuffix(" mA")
+        fast_init_layout.addWidget(self.fast_init_target_spin)
+        self.fast_init_progress = QProgressBar()
+        self.fast_init_progress.setRange(0, 60)
+        self.fast_init_progress.setValue(0)
+        self.fast_init_progress.setTextVisible(False)
+        self.fast_init_progress.setObjectName("InitProgress")
+        self.fast_init_status_label = QLabel("Target 2.00 mA / max 60 s")
+        self.fast_init_status_label.setObjectName("Diagnosis")
+        self.fast_init_status_label.setWordWrap(True)
+        fast_init_layout.addWidget(self.fast_init_btn)
+        fast_init_layout.addWidget(self.fast_init_progress, 1)
+        fast_init_layout.addWidget(self.fast_init_status_label, 2)
+
         diag_tab = QWidget()
         diag_layout = QHBoxLayout(diag_tab)
         diag_layout.setContentsMargins(10, 10, 10, 10)
@@ -1158,6 +1378,7 @@ class DashboardWindow(QMainWindow):
         wave_layout.addStretch()
 
         tabs.addTab(init_tab, "Initialize")
+        tabs.addTab(fast_init_tab, "Fast Init")
         tabs.addTab(diag_tab, "Diagnose")
         tabs.addTab(recover_tab, "Recover")
         tabs.addTab(wave_tab, "Square Wave")
@@ -1241,6 +1462,8 @@ class DashboardWindow(QMainWindow):
             if hasattr(self, "init_progress"):
                 self.init_progress.setValue(0)
                 self.init_elapsed_label.setText("Elapsed 0 / 120 s")
+                self.fast_init_progress.setValue(0)
+                self.fast_init_status_label.setText("Target 2.00 mA / max 60 s")
             for card in self._cards:
                 card.reset_detection()
 
@@ -1258,6 +1481,7 @@ class DashboardWindow(QMainWindow):
             self._update_action_availability()
         elif hasattr(self, "init_btn"):
             self.init_btn.setEnabled(False)
+            self.fast_init_btn.setEnabled(False)
             self.diag_btn.setEnabled(False)
             self.recover_btn.setEnabled(False)
             self.square_target_btn.setEnabled(False)
@@ -1305,19 +1529,60 @@ class DashboardWindow(QMainWindow):
             )
         )
 
+    def _on_fast_init_progress(self, result: dict[str, Any]) -> None:
+        elapsed_s = int(result["elapsed_s"])
+        duration_s = int(result["duration_s"])
+        self.fast_init_progress.setRange(0, duration_s)
+        self.fast_init_progress.setValue(elapsed_s)
+        self.fast_init_status_label.setText(
+            "{elapsed_s} / {duration_s} s - delta {delta_ma:.2f} mA "
+            "target {target_delta_ma:.2f} mA - drive {target_voltage:.0f} V "
+            "- {status}".format(
+                elapsed_s=elapsed_s,
+                duration_s=duration_s,
+                delta_ma=float(result["delta_ma"]),
+                target_delta_ma=float(result["target_delta_ma"]),
+                target_voltage=float(result["target_voltage"]),
+                status=str(result["status"]),
+            )
+        )
+        actuator = int(result["actuator"])
+        self._cards[actuator].set_health(
+            {
+                "state": "fast_init",
+                "delta_ma": float(result["delta_ma"]),
+                "target_voltage": float(result["target_voltage"]),
+            }
+        )
+
+    def _on_fast_init_ready(self, result: dict[str, Any]) -> None:
+        elapsed_s = int(float(result["elapsed_s"]))
+        duration_s = int(float(result["duration_s"]))
+        self.fast_init_progress.setRange(0, duration_s)
+        self.fast_init_progress.setValue(elapsed_s)
+        outcome = "Success" if result.get("success") else "Failed"
+        self.fast_init_status_label.setText(
+            "{outcome}: delta {delta_ma:.2f} mA at {target_voltage:.0f} V "
+            "- SDK state {final_state}".format(
+                outcome=outcome,
+                delta_ma=float(result["delta_ma"]),
+                target_voltage=float(result["target_voltage"]),
+                final_state=str(result["final_state"]),
+            )
+        )
+
     def _on_recovery_ready(self, result: dict[str, Any]) -> None:
         self.diagnosis_label.setText(
             "Recovery {actuator} done after {duration_s}s: baseline {baseline_ma:.2f} mA, "
             "manual avg {recovery_ma:.2f} mA, delta {delta_ma:.2f} mA "
-            "at {target_voltage:.1f} V target from {supply_voltage:.1f} V PSU "
-            "(raw {output_value}/255)".format(**result)
+            "at {target_voltage:.1f} V target from {supply_voltage:.1f} V PSU".format(**result)
         )
 
     def _on_recovery_progress(self, result: dict[str, Any]) -> None:
         self.diagnosis_label.setText(
             "Recovery {actuator}: {elapsed_s}/{duration_s}s, baseline "
             "{baseline_ma:.2f} mA, current {current_ma:.2f} mA, "
-            "delta {delta_ma:.2f} mA, raw {output_value}/255".format(**result)
+            "delta {delta_ma:.2f} mA at {target_voltage:.1f} V".format(**result)
         )
 
     def _on_health_ready(self, group: int, results: dict[int, dict[str, Any]]) -> None:
@@ -1390,6 +1655,7 @@ class DashboardWindow(QMainWindow):
         error = state == "error"
         connected = state in {"idle", "error"}
         self.init_btn.setEnabled(available or error)
+        self.fast_init_btn.setEnabled(available or error)
         self.diag_btn.setEnabled(available or error)
         self.recover_btn.setEnabled(connected)
         self.square_target_btn.setEnabled(available)

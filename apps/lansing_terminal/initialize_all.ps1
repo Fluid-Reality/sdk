@@ -9,7 +9,7 @@ Runs lansing_terminal in JSON mode for each requested actuator. Every actuator
 is detected first. If its measured current delta is above TargetDeltaMa, the
 script repeatedly runs:
 
-    detect <actuator>; initialize <actuator>
+    detect <actuator>; init <actuator>
 
 This continues even after the actuator enters Ready state, until its current
 delta reaches the requested target. The post-initialization current delta must
@@ -371,10 +371,10 @@ try {
             ) -ForegroundColor Yellow
 
             # Detection and initialization must run in the same terminal process.
-            # A new SDK object begins with Unknown actuator state, and initialize
+            # A new SDK object begins with Unknown actuator state, and init
             # intentionally requires a successful detection first.
             $initializationRun = Invoke-LansingTerminal `
-                -Command "psu on; psuc on; detect $actuator; initialize $actuator"
+                -Command "psu on; psuc on; detect $actuator; init $actuator"
 
             if ($initializationRun.ExitCode -ne 0) {
                 $message = Get-TerminalErrorMessage -Records $initializationRun.Records

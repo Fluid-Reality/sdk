@@ -155,7 +155,7 @@ class LansingInitializer:
                 f"{previous_delta:.3f} mA"
             )
             initialization_run = self._invoke_terminal(
-                f"psu on; psuc on; detect {actuator}; initialize {actuator}",
+                f"psu on; psuc on; detect {actuator}; init {actuator}",
                 show_progress=True,
             )
             if initialization_run.returncode != 0:
