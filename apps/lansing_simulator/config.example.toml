@@ -1,0 +1,89 @@
+schema_version = 1
+
+[serial]
+# Reserved for the communication backend we will select separately.
+port = ""
+baudrate = 250000
+
+[simulation]
+random_seed = 12345
+time_scale = 1.0
+strict_firmware_0_1 = true
+
+[firmware]
+name = "Lansing"
+version = "0.1"
+protocol = "0.1"
+actuator_count = 24
+max_active_ms = 5000
+discharge_ms = 2000
+persist_state = true
+state_file = "runtime/lansing_simulator_state.json"
+
+[power]
+voltage_v = 220.0
+voltage_noise_stddev_v = 0.25
+voltage_when_off_v = 0.0
+current_when_off_ma = 0.0
+startup_delay_ms = 0
+
+[current]
+board_baseline_ma = 1.33
+board_noise_stddev_ma = 0.02
+adc_bits = 12
+adc_reference_v = 3.3
+current_conversion_ma_per_v = 20.0
+voltage_conversion_v_per_v = 137.5
+
+[actuator_defaults]
+connected = true
+forward_delta_ma_at_255 = 2.0
+discharge_delta_ma_at_255 = 2.0
+current_noise_stddev_ma = 0.03
+
+[actuator_defaults.conditioning]
+enabled = true
+improvement_ma_per_dose_second = 0.0025
+minimum_delta_ma = 1.5
+
+[actuator_defaults.faults]
+# -1 means the physical output follows the firmware command cache.
+stuck_positive_output = -1
+stuck_negative_output = -1
+short_circuit_delta_ma_at_255 = 0.0
+intermittent_disconnect_probability = 0.0
+
+# This actuator begins in the SDK's Error range: baseline 1.33 + delta 5.14.
+[actuators."0"]
+connected = true
+forward_delta_ma_at_255 = 5.14
+discharge_delta_ma_at_255 = 5.10
+current_noise_stddev_ma = 0.03
+
+[actuators."0".conditioning]
+enabled = true
+improvement_ma_per_dose_second = 0.01
+minimum_delta_ma = 1.8
+
+# An absent/open actuator contributes no current regardless of configured deltas.
+[actuators."1"]
+connected = false
+
+# An actuator already in the SDK's Ready range.
+[actuators."2"]
+connected = true
+forward_delta_ma_at_255 = 2.2
+discharge_delta_ma_at_255 = 2.1
+
+[logging]
+enabled = true
+file = "logs/lansing_simulator.jsonl"
+console = false
+include_raw_bytes = true
+max_bytes = 5000000
+backup_count = 3
+
+[faults]
+response_delay_ms = 0
+drop_response_probability = 0.0
+corrupt_response_probability = 0.0

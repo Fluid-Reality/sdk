@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lansing-simulator"
+version = "0.1.0"
+description = "Standalone firmware-level simulator for the Fluid Reality Lansing controller"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Fluid Reality" }]
+dependencies = []
+
+[project.scripts]
+lansing-simulator = "lansing_simulator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

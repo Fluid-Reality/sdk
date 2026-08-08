@@ -226,6 +226,23 @@ See [apps/lansing_terminal/README.md](apps/lansing_terminal/README.md) for
 installation, the complete command reference, JSON schemas, automation options,
 and platform-specific usage instructions.
 
+## Simulator
+
+The repository includes a standalone Lansing firmware simulator for developing
+and testing applications before physical hardware is available. It implements
+the firmware 0.1 command parser, actuator and discharge state machines,
+diagnosis and initialization behavior, configurable electrical measurements,
+conditioning, persistent runtime state, deterministic faults, and structured
+JSONL logging.
+
+The simulator core accepts and returns raw firmware-protocol bytes. Serial-port
+communication is intentionally deferred until the real or virtual serial
+transport is selected; it does not currently connect to the SDK.
+
+See [apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
+architecture, local harness, configuration reference, firmware-fidelity notes,
+and test instructions.
+
 ## Examples
 
 Example scripts are available in [examples](examples):

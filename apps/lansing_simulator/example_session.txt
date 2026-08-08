@@ -1,0 +1,15 @@
+# Lines beginning with # are ignored by the local script harness.
+VER
+PSU ON
+PSC ON
+VLT
+CUR
+DIA 0
+CFG SAFE OFF
+OUT 0 255 0
+.advance 5
+OUT 0 0 255
+.advance 5
+OUT 0 0 0
+DIA 0
+STS
