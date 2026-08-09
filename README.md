@@ -34,32 +34,59 @@ The exact name depends on the operating system:
 If more than one device is listed, unplug the board, run the command again,
 then plug it back in and look for the new entry.
 
-### Transparent simulator redirection
+### Simulator port aliases
 
-Existing applications can be redirected to a Lansing simulator without code
-changes. Set `FLUID_REALITY_TRANSPORT` to a raw TCP endpoint before starting the
-application:
+Existing applications can expose a Lansing TCP simulator under a selectable
+port name without code changes. Set `FLUID_REALITY_VIRTUAL_PORTS` before starting
+the application:
 
 ```powershell
-$env:FLUID_REALITY_TRANSPORT="tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
 ```
 
-Every normal `Lansing(port)` connection in that process then uses the TCP
-endpoint instead of opening `port`. Unset the variable to restore physical
-serial operation. See
+Only `Lansing("COM66")` uses the mapped TCP endpoint. Selecting another COM
+port opens that physical serial port normally. Separate multiple mappings with
+semicolons. See
 [apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
 simulator command and platform-specific examples.
 
-List physical serial ports together with the configured TCP endpoint:
+List physical serial ports together with configured aliases:
 
 ```python
 from fluid_reality import list_ports
 
 print(list_ports())
-# Example: ["COM1", "COM2", "tcp://127.0.0.1:8765"]
+# Example: ["COM1", "COM2", "COM66"]
 ```
 
 Every returned value can be passed directly to `Lansing(...)`.
+
+To inspect exact TX/RX traffic or expose a physical board to another computer, run
+the terminal-only [Device Bridge](apps/device_bridge/README.md). It maps
+an SDK virtual alias to a physical serial port and can print or save binary-safe
+hexadecimal and ASCII traces.
+
+### Developing simulated-device listeners
+
+The SDK exposes a raw byte-stream listener for device simulators. It performs
+no text decoding or message framing, so protocols can switch freely between
+line commands and binary streaming:
+
+```python
+from fluid_reality import TcpDeviceListener
+
+with TcpDeviceListener("127.0.0.1", 8765) as listener:
+    while True:
+        with listener.accept() as connection:
+            while chunk := connection.read_bytes(4096):
+                response = protocol.feed(chunk)
+                if response:
+                    connection.write_bytes(response)
+```
+
+`write_bytes()` uses `sendall()` semantics. Applications should keep protocol
+buffering, command terminators, binary packet boundaries, and mode transitions
+inside their protocol engine.
 
 ## Touch Validation Example
 

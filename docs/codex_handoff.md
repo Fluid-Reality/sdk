@@ -83,11 +83,12 @@ apps/lansing_dashboard/assets/
 Run from the SDK root:
 
 ```powershell
+python -m pip install -e .
 python -m pip install -r apps\lansing_dashboard\requirements.txt
 python apps\lansing_dashboard\app.py
 ```
 
-The dashboard requirements install the published `fluid-reality` package from PyPI. It should use that installed package rather than an editable SDK checkout.
+The editable install ensures the dashboard uses the SDK from the checkout.
 
 Dashboard design decisions:
 
@@ -302,13 +303,15 @@ apps/lansing_terminal/requirements.txt
 Run from the terminal application directory:
 
 ```powershell
+python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python lansing_terminal.py
 ```
 
 Terminal behavior and naming decisions:
 
-- `ports` lists serial devices without requiring a board connection.
+- `ports` lists physical serial devices and configured virtual aliases without
+  requiring a board connection.
 - `connect <port>` handles transport failures as terminal errors instead of
   allowing a Python traceback to terminate the interactive process.
 - `psu [on|off]` controls the high-voltage supply.
@@ -346,7 +349,7 @@ Documentation layout follows the dashboard pattern:
   operator manual, complete command reference, JSON schema reference,
   automation reference, and troubleshooting guide.
 
-Current SDK distribution version is `0.1.3`. Keep `pyproject.toml` and
+Current SDK distribution version is `0.1.5`. Keep `pyproject.toml` and
 `fluid_reality.__version__` synchronized.
 
 ## Hardware Model
@@ -603,12 +606,20 @@ Main files:
 - `src/fluid_reality/boards/lansing.py`: Lansing wrapper
 - `src/fluid_reality/boards/lansing_errors.py`: Lansing firmware error catalog
 - `src/fluid_reality/protocol.py`: shared OK/ER/DBG protocol parser
-- `src/fluid_reality/transport.py`: pyserial transport
+- `src/fluid_reality/transport.py`: physical serial transport and
+  `FLUID_REALITY_VIRTUAL_PORTS` alias routing
+- `src/fluid_reality/listener.py`: reusable raw-byte `TcpDeviceListener` and
+  `TcpDeviceConnection` APIs for simulated devices
 - `src/fluid_reality/errors.py`: SDK exceptions
 - `tests/test_lansing.py`: tests
 - `examples/`: example scripts
 
 The SDK is structured so other board wrappers can be added later under `src/fluid_reality/boards`.
+
+Virtual-port mappings use semicolon-separated entries such as
+`COM66=tcp://127.0.0.1:8765`. Only the selected alias is redirected; unmapped
+ports remain physical. Device simulators should use `TcpDeviceListener` and
+keep ASCII/binary framing in their own protocol engines.
 
 ## SDK Lansing Wrapper
 

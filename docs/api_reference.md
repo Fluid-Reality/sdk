@@ -11,7 +11,7 @@ This document focuses on the Lansing Development Kit API provided by
 ## Index
 
 - [Installation](#installation)
-- [Finding The Serial Port](#finding-the-serial-port)
+- [Finding A Board Endpoint](#finding-a-board-endpoint)
 - [Minimal Touch Validation](#minimal-touch-validation)
 - [Imports](#imports)
 - [Lansing Class Constants](#lansing-class-constants)
@@ -27,6 +27,7 @@ This document focuses on the Lansing Development Kit API provided by
 - [Manual Output And Advanced Bench Control](#manual-output-and-advanced-bench-control)
 - [Streaming](#streaming)
 - [Low-Level Protocol Utilities](#low-level-protocol-utilities)
+- [Virtual Ports And Device Listeners](#virtual-ports-and-device-listeners)
 - [Response Objects](#response-objects)
 - [Errors](#errors)
 - [Recommended Customer Workflows](#recommended-customer-workflows)
@@ -49,10 +50,18 @@ from fluid_reality import Lansing
 print(Lansing.actuator_count)
 ```
 
-## Finding The Serial Port
+## Finding A Board Endpoint
 
-Connect the Lansing board over USB, then list the serial ports visible to
-Python:
+Use the SDK to list physical serial ports and configured virtual-port aliases:
+
+```python
+from fluid_reality import list_ports
+
+print(list_ports())
+```
+
+For physical hardware, connect the Lansing board over USB. You can also inspect
+the operating-system serial ports directly:
 
 ```bash
 python -m serial.tools.list_ports
@@ -65,6 +74,21 @@ Typical examples:
 - Windows: `COM4`, `COM16`
 - macOS: `/dev/cu.usbmodem...`
 - Linux: `/dev/ttyACM...` or `/dev/ttyUSB...`
+
+To expose a raw TCP device simulator under a selectable alias:
+
+```powershell
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+```
+
+On macOS/Linux:
+
+```bash
+export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:8765"
+```
+
+Multiple mappings are separated by semicolons. Only the selected mapped alias
+uses TCP; every unmapped serial port remains physical.
 
 ## Minimal Touch Validation
 
@@ -117,7 +141,11 @@ from fluid_reality import (
     LansingVersion,
     ManualOutput,
     ProtocolError,
+    TcpDeviceConnection,
+    TcpDeviceListener,
     TransportError,
+    is_virtual_port,
+    list_ports,
 )
 ```
 
@@ -155,7 +183,8 @@ Create a Lansing board wrapper.
 
 Pass either:
 
-- `port`: serial-port device name, or
+- `port`: physical serial-port name, configured virtual-port alias, or direct
+  `tcp://host:port` endpoint, or
 - `transport`: custom transport object for tests or advanced integrations.
 
 Use a context manager whenever possible so the serial connection closes
@@ -189,7 +218,7 @@ board = Lansing("<serial-port>", timeout=60.0)
 board.close()
 ```
 
-Custom serial kwargs are passed to `pyserial.Serial`.
+Custom serial kwargs are passed to `pyserial.Serial` for physical ports.
 
 ```python
 from fluid_reality import Lansing
@@ -1105,6 +1134,81 @@ board.reboot()
 ```
 
 After rebooting, close and reopen the `Lansing` object before continuing.
+
+## Virtual Ports And Device Listeners
+
+### `list_ports() -> list[str]`
+
+Return physical serial-port names followed by aliases configured through
+`FLUID_REALITY_VIRTUAL_PORTS`. Duplicate names are omitted case-insensitively.
+
+```python
+from fluid_reality import list_ports
+
+print(list_ports())  # Example: ["COM4", "COM66"]
+```
+
+The environment variable contains semicolon-separated `alias=endpoint`
+mappings:
+
+```text
+COM66=tcp://127.0.0.1:8765;COM67=tcp://127.0.0.1:8766
+```
+
+Calling `Lansing("COM66")` opens the mapped TCP byte stream. Calling
+`Lansing("COM4")` still opens physical `COM4` through PySerial.
+
+### `is_virtual_port(port) -> bool`
+
+Return `True` for a configured alias or direct `tcp://` endpoint. This is useful
+when a port picker needs to distinguish physical and simulated devices.
+
+### `TcpDeviceListener(host="127.0.0.1", port=8765, *, backlog=1)`
+
+Create a synchronous raw-TCP listener for device simulators. Use `port=0` to
+request an available ephemeral port. The listener performs no decoding,
+buffering, line splitting, or packet framing.
+
+Properties:
+
+- `address -> tuple[str, int]`
+- `endpoint -> str`, formatted as `tcp://host:port`
+
+Methods:
+
+- `start() -> TcpDeviceListener`
+- `accept(timeout=None) -> TcpDeviceConnection`
+- `close() -> None`
+
+`accept()` raises `TimeoutError` when its optional timeout expires.
+
+### `TcpDeviceConnection`
+
+Represents one accepted raw byte stream.
+
+- `address -> tuple[str, int]`: connected client address
+- `read_bytes(maximum=4096) -> bytes`: returns arbitrary bytes, or `b""` after
+  peer disconnect
+- `write_bytes(data) -> None`: transmits all bytes using `sendall()` semantics
+- `close() -> None`
+
+Both listener and connection are context managers:
+
+```python
+from fluid_reality import TcpDeviceListener
+
+with TcpDeviceListener("127.0.0.1", 8765) as listener:
+    while True:
+        with listener.accept() as connection:
+            while chunk := connection.read_bytes(4096):
+                protocol.feed(chunk)
+```
+
+The protocol engine must handle partial reads, multiple commands in one read,
+text terminators, and binary packet boundaries. This is what allows the same
+listener to carry Lansing ASCII commands and two-byte binary stream packets.
+Bind to loopback unless the unauthenticated, unencrypted raw protocol is
+intentionally being exposed to a trusted network.
 
 ## Response Objects
 

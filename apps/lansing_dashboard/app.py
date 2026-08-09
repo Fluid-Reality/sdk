@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fluid_reality import FirmwareError, Lansing
+from fluid_reality import FirmwareError, Lansing, list_ports
 
 
 STATE_NAMES = {
@@ -1417,9 +1417,7 @@ class DashboardWindow(QMainWindow):
         current = self.port_combo.currentText().strip()
         ports: list[str] = []
         try:
-            from serial.tools import list_ports
-
-            ports = [port.device for port in list_ports.comports()]
+            ports = list_ports()
         except Exception:
             ports = []
 

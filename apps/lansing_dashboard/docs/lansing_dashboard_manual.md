@@ -10,6 +10,24 @@ This manual explains how to install and operate the Fluid Reality Lansing Dashbo
 
 The screenshots in this manual use representative measurements. Your port names, voltage, current, actuator health, and event-log timestamps will vary by system and board.
 
+## Virtual simulator ports
+
+The dashboard lists physical serial ports together with aliases configured by
+the SDK. Set the variable before launching the dashboard:
+
+```powershell
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+```
+
+On macOS/Linux:
+
+```bash
+export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:8765"
+```
+
+Multiple mappings are separated by semicolons. Only a selected mapped alias is
+redirected; all other listed ports continue to use physical serial.
+
 ## Getting Started
 
 Use Python 3.10 or newer.
@@ -24,6 +42,7 @@ cd sdk/apps/lansing_dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python app.py
 ```
@@ -36,6 +55,7 @@ cd sdk\apps\lansing_dashboard
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python app.py
 ```

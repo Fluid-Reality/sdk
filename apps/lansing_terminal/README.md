@@ -13,7 +13,7 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 
 ## Features
 
-- List serial ports and connect to a Lansing board.
+- List physical serial ports and configured virtual-port aliases.
 - Control the high-voltage power supply and PSU connection independently.
 - Read voltage, current, configuration, status, and runtime counters.
 - Detect individual actuators or eight-actuator groups.
@@ -31,8 +31,7 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 
 ## Install
 
-The application requirements install the published `fluid-reality` package
-from PyPI.
+Install the checked-out SDK in editable mode before the app requirements.
 
 ### Windows PowerShell
 
@@ -42,6 +41,7 @@ cd sdk\apps\lansing_terminal
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python lansing_terminal.py
 ```
@@ -54,13 +54,14 @@ cd sdk/apps/lansing_terminal
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python lansing_terminal.py
 ```
 
 ## Quick Start
 
-List serial ports without opening a board:
+List board endpoints without opening a board:
 
 ```bash
 python lansing_terminal.py -c "ports"
@@ -71,7 +72,7 @@ Start an interactive session and connect from the terminal:
 ```text
 python lansing_terminal.py
 lansing(disconnected)> ports
-lansing(disconnected)> connect <serial-port>
+lansing(disconnected)> connect <serial-port-or-tcp-endpoint>
 lansing> psu on
 lansing> voltage
 lansing> psuc on
@@ -89,6 +90,21 @@ Connect during startup:
 
 ```powershell
 python lansing_terminal.py --port COM6
+```
+
+To expose a TCP simulator as a selectable port alias, set
+`FLUID_REALITY_VIRTUAL_PORTS` before starting the terminal:
+
+```powershell
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+python lansing_terminal.py -c "ports"
+```
+
+Selecting `COM66` connects to TCP; other COM ports remain physical. Multiple
+aliases may be separated by semicolons. A TCP endpoint can also be passed directly:
+
+```powershell
+python lansing_terminal.py --port tcp://127.0.0.1:8765
 ```
 
 Run a fail-fast command sequence:

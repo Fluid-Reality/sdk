@@ -7,7 +7,7 @@ benches.
 
 The terminal can:
 
-- discover serial ports and connect to a Lansing controller;
+- discover physical and virtual ports and connect to a Lansing controller;
 - control the high-voltage power supply and its connection to the actuator path;
 - read voltage, current, configuration, status, and runtime counters;
 - detect, diagnose, initialize, fast-initialize, and recover actuators;
@@ -80,8 +80,8 @@ machines.
 
 ## Installation
 
-The application requirements install the published `fluid-reality` package
-from PyPI. They do not install an editable copy of the SDK source tree.
+Install the checked-out SDK in editable mode before the app requirements so
+the terminal uses the source and APIs from the same repository revision.
 
 ### Windows PowerShell
 
@@ -91,6 +91,7 @@ cd sdk\apps\lansing_terminal
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python lansing_terminal.py
 ```
@@ -103,6 +104,7 @@ cd sdk/apps/lansing_terminal
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python lansing_terminal.py
 ```
@@ -461,18 +463,21 @@ or:
 ports
 ```
 
-Lists serial ports visible to Python. A board connection is not required.
+Lists physical serial ports and port aliases configured through
+`FLUID_REALITY_VIRTUAL_PORTS`, such as
+`COM66=tcp://127.0.0.1:8765`. A board connection is not required.
 
 Text example:
 
 ```text
-COM6    USB Serial Device (COM6)
+COM6                           serial port
+COM66                          virtual TCP port
 ```
 
 JSON example:
 
 ```json
-{"event":"serial_port","port":"COM6","description":"USB Serial Device (COM6)"}
+{"event":"serial_port","port":"COM66","description":"virtual TCP port"}
 ```
 
 One object is emitted per port. If no ports are found:
@@ -490,9 +495,9 @@ the results, or identify the USB serial device through the operating system.
 connect <port>
 ```
 
-Closes any current board object, opens the requested serial port, forces a clean
-text-protocol boundary, reads the firmware version, and prints a status
-snapshot.
+Closes any current board object, opens the requested serial or TCP endpoint,
+forces a clean text-protocol boundary, reads the firmware version, and prints a
+status snapshot.
 
 Examples:
 
@@ -500,6 +505,7 @@ Examples:
 connect COM6
 connect /dev/cu.usbmodem1101
 connect /dev/ttyACM0
+connect tcp://127.0.0.1:8765
 ```
 
 If a square wave is running, `connect` stops it before changing the connection.
@@ -530,7 +536,7 @@ status
 
 Reads the board's multi-line status response and reports:
 
-- connected serial port;
+- connected board endpoint;
 - PSU state;
 - PSU-connection state;
 - measured voltage and current;
@@ -1268,7 +1274,7 @@ example, scripted detection produces a `command` record, a
 | Command echo | `event="command"`, `command` | Every `-c` command |
 | Help | `event="help"`, `commands` or `topic`, `text` | `help` |
 | Serial port | `event="serial_port"`, `port`, `description` | `ports` |
-| No serial ports | `event="serial_ports"`, `ports=[]` | `ports` |
+| No board endpoints | `event="serial_ports"`, `ports=[]` | `ports` |
 | Log | `event="log"`, `timestamp`, `level`, `message` | connection and square-wave events |
 | Error | `event="error"`, `timestamp`, `level`, `message` | any handled command error |
 | Status | `event="status"`, telemetry, config, square-wave state, counts | `status`, successful `connect` |
@@ -1466,7 +1472,7 @@ processed.
 
 For each actuator, the workflow is:
 
-1. Start a terminal process on the requested serial port.
+1. Start a terminal process on the requested board endpoint.
 2. Run `psu on; psuc on; detect <actuator>`.
 3. Read the final structured detection record from terminal NDJSON.
 4. If the actuator is `Not connected`, report it and skip initialization.
@@ -1814,7 +1820,7 @@ set `PYTHON_EXECUTABLE`, or pass `-PythonExecutable`/`--python-executable`.
 **The script cannot find `lansing_terminal.py`.** Run from the checked-out application
 directory or provide `-TerminalPath`/`--terminal-path`.
 
-**The serial port repeatedly opens and closes.** This is expected. Each attempt
+**The board endpoint repeatedly opens and closes.** This is expected. Each attempt
 uses a fresh terminal process, re-establishes a clean protocol boundary, and
 detects before initialization.
 
@@ -1855,7 +1861,7 @@ python lansing_terminal.py -j --port COM6 -c "status; diagnose 0; states group 0
 
 ## Troubleshooting
 
-### No serial ports are listed
+### No board endpoints are listed
 
 1. Confirm that the USB cable supports data, not power only.
 2. Confirm that the controller is powered and connected.

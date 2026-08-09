@@ -9,7 +9,7 @@ For the complete operator guide, see the
 
 ## Features
 
-- Connect to a Lansing board over a serial COM port.
+- Connect to a physical serial port or a TCP simulator exposed under a configured port alias.
 - View power supply state, output connection state, voltage, current, and timing config.
 - View actuators by bank: group 0 shows `0-7`, group 1 shows `8-15`, and group 2 shows `16-23`. Most Lansing Development Kit setups use only one populated group with eight actuators, typically group 0.
 - Click an actuator card to select it; initialize, diagnose, and square-wave actions apply to the selected actuator.
@@ -34,6 +34,17 @@ For the complete operator guide, see the
   - command off, which triggers firmware-managed discharge
   - wait for firmware debug confirmation that discharge stopped before reactivating
 
+## Virtual simulator ports
+
+Configure an alias before launching the dashboard:
+
+```powershell
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+```
+
+`COM66` appears in the port selector and connects to the mapped simulator.
+Selecting an unmapped port such as `COM9` continues to use physical serial.
+
 ## Run
 
 Clone the SDK repository and enter the dashboard application folder.
@@ -46,6 +57,7 @@ cd sdk/apps/lansing_dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+python -m pip install -e ../..
 python -m pip install -r requirements.txt
 python app.py
 ```
@@ -58,13 +70,12 @@ cd sdk\apps\lansing_dashboard
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+python -m pip install -e ..\..
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-The dashboard requirements install the published `fluid-reality` package from
-PyPI. The dashboard should use that installed package rather than an editable
-SDK checkout.
+The editable install ensures the dashboard uses the SDK from this checkout.
 
 ## Notes
 

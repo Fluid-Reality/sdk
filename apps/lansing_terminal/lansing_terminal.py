@@ -17,9 +17,14 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-from serial.tools import list_ports
-
-from fluid_reality import ActuatorState, FirmwareError, FluidRealityError, Lansing
+from fluid_reality import (
+    ActuatorState,
+    FirmwareError,
+    FluidRealityError,
+    Lansing,
+    is_virtual_port,
+    list_ports,
+)
 
 
 PROMPT = "lansing> "
@@ -32,7 +37,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        help="Serial port to connect on startup, for example COM4, /dev/cu.usbmodem..., or /dev/ttyACM0.",
+        help="Board endpoint to connect on startup, for example COM4, /dev/ttyACM0, or tcp://127.0.0.1:8765.",
     )
     parser.add_argument(
         "--verbose",
@@ -312,25 +317,25 @@ class LansingTerminal(cmd.Cmd):
         self._emit("", event="help", commands=commands)
 
     def do_ports(self, arg: str) -> None:
-        """List serial ports visible to Python."""
+        """List available physical serial ports and configured virtual aliases."""
 
-        ports = list(list_ports.comports())
+        ports = list_ports()
         if not ports:
-            self._emit("No serial ports found.", event="serial_ports", ports=[])
+            self._emit("No board endpoints found.", event="serial_ports", ports=[])
             return
-        for item in ports:
-            description = item.description or "serial port"
+        for port in ports:
+            description = "virtual TCP port" if is_virtual_port(port) else "serial port"
             self._emit(
-                f"{item.device}\t{description}",
+                f"{port}\t{description}",
                 event="serial_port",
-                port=item.device,
+                port=port,
                 description=description,
             )
 
     def do_connect(self, arg: str) -> None:
         """connect <port>
 
-        Open a Lansing board connection on the selected serial port.
+        Open a Lansing board connection on the selected serial or TCP endpoint.
         """
 
         parts = shlex.split(arg)
