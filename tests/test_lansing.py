@@ -345,44 +345,111 @@ def test_lansing_set_actuator_requires_ready_state():
     assert transport.writes == []
 
 
-def test_lansing_detect_marks_actuator_ready():
-    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>0,BASE>0.86,FWD>1.18,DIS>0.91"])
+def detection_responses(
+    baseline_ma: float,
+    initial_ma: float,
+    conditioned_ma: float | None,
+) -> list[str]:
+    responses = ["OK:SAFE>ON", "OK:CFG_SAFE", *(["OK:OUT"] * Lansing.actuator_count)]
+    responses.extend([f"OK:{baseline_ma}", "OK:OUT", f"OK:{initial_ma}"])
+    if conditioned_ma is not None:
+        responses.append(f"OK:{conditioned_ma}")
+    responses.extend(["OK:OUT", "OK:CFG_SAFE"])
+    return responses
+
+
+def test_lansing_detect_marks_actuator_ready(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 9.0, 2.5))
     board = Lansing(transport=transport)
+    sleeps = []
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
 
     assert board.detect(0) is ActuatorState.READY
 
     detection = board.last_detection(0)
     assert detection is not None
     assert detection.state is ActuatorState.READY
-    assert detection.delta_ma == 0.32
+    assert detection.initial_forward_ma == 9.0
+    assert detection.initial_delta_ma == 8.0
+    assert detection.forward_ma == 2.5
+    assert detection.delta_ma == 1.5
+    assert detection.discharge_ma == 0.0
     assert board.actuator_state(0) is ActuatorState.READY
-    assert transport.writes == [
-        "ACT 0 0",
-        "ACT 1 0",
-        "ACT 2 0",
-        "ACT 3 0",
-        "ACT 4 0",
-        "ACT 5 0",
-        "ACT 6 0",
-        "ACT 7 0",
-        "DIA 0",
+    assert transport.writes[:2] == ["CFG SAFE", "CFG SAFE OFF"]
+    assert transport.writes[2:26] == [f"OUT {actuator} 0 0" for actuator in range(24)]
+    assert transport.writes[26:] == [
+        "CUR",
+        "OUT 0 255 0",
+        "CUR",
+        "CUR",
+        "OUT 0 0 0",
+        "CFG SAFE ON",
+    ]
+    assert sleeps == [0.25, 2.0]
+    assert [write for write in transport.writes if write.startswith("OUT") and write.split()[2:] != ["0", "0"]] == [
+        "OUT 0 255 0"
     ]
 
 
-def test_lansing_detect_marks_actuator_not_connected():
-    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>3,BASE>0.86,FWD>0.91,DIS>0.90"])
+def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 1.05, 1.05))
     board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
 
     assert board.detect(3) is ActuatorState.NOT_CONNECTED
     assert board.actuator_state(3) is ActuatorState.NOT_CONNECTED
 
 
-def test_lansing_detect_marks_actuator_error():
-    transport = FakeTransport(["OK:ACT"] * 8 + ["OK:ACT>4,BASE>0.88,FWD>4.42,DIS>1.16"])
+def test_lansing_detect_rejects_high_initial_current_without_conditioning(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 11.01, None))
     board = Lansing(transport=transport)
+    sleeps = []
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
 
     assert board.detect(4) is ActuatorState.ERROR
     assert board.actuator_state(4) is ActuatorState.ERROR
+    assert board.last_detection(4).initial_delta_ma == 10.01
+    assert sleeps == [0.25]
+    assert transport.writes.count("CUR") == 2
+
+
+def test_lansing_detect_marks_conditioned_current_at_three_ma_as_error(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 5.0, 4.0))
+    board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+
+    assert board.detect(4) is ActuatorState.ERROR
+    assert board.last_detection(4).delta_ma == 3.0
+
+
+def test_lansing_detect_stops_output_and_restores_safety_when_measurement_fails(monkeypatch):
+    transport = FakeTransport(
+        [
+            "OK:SAFE>OFF",
+            "OK:CFG_SAFE",
+            *(["OK:OUT"] * Lansing.actuator_count),
+            "OK:OUT",
+            "OK:OUT",
+            "OK:CFG_SAFE",
+        ]
+    )
+    board = Lansing(transport=transport)
+    measurements = iter([1.0, RuntimeError("current read failed")])
+
+    def current() -> float:
+        result = next(measurements)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(board, "current", current)
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+
+    with pytest.raises(RuntimeError, match="current read failed"):
+        board.detect(2)
+
+    assert transport.writes[-2:] == ["OUT 2 0 0", "CFG SAFE OFF"]
+    assert board.actuator_state(2) is ActuatorState.UNKNOWN
 
 
 def test_lansing_initialize_requires_detection_first():

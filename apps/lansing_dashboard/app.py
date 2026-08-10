@@ -567,7 +567,8 @@ class BoardWorker(QThread):
             "info",
         )
         self.message.emit(
-            "Detection thresholds: <0.10 mA not connected, >3.00 mA error, otherwise ready.",
+            "Detection: 250 ms forward check (>10.00 mA stops as error), then 2.00 s "
+            "continuous forward; final <0.10 mA not connected, >=3.00 mA error, otherwise ready.",
             "info",
         )
         if self._square_actuators:
@@ -577,8 +578,8 @@ class BoardWorker(QThread):
         for actuator in actuators:
             self.health_ready.emit(group, {actuator: {"state": "detecting"}})
             self.message.emit(
-                f"Detection actuator {actuator}: running SDK detect "
-                "(group off, diagnostic, state update).",
+                f"Detection actuator {actuator}: zeroing all outputs, then running "
+                "the forward-only 250 ms and 2 s current checks.",
                 "info",
             )
             detection = board.detect_actuator(actuator)
@@ -588,8 +589,10 @@ class BoardWorker(QThread):
             self.health_ready.emit(group, {actuator: entry})
             self.message.emit(
                 f"Detection actuator {actuator}: baseline {detection.baseline_ma:.2f} mA, "
-                f"forward {detection.forward_ma:.2f} mA, discharge {detection.discharge_ma:.2f} mA, "
-                f"delta {entry['delta_ma']:.2f} mA -> {'ready' if entry['state'] == 'idle' else entry['state']}.",
+                f"initial forward {detection.initial_forward_ma:.2f} mA "
+                f"(delta {detection.initial_delta_ma:.2f} mA), final forward "
+                f"{detection.forward_ma:.2f} mA (delta {entry['delta_ma']:.2f} mA) -> "
+                f"{'ready' if entry['state'] == 'idle' else entry['state']}.",
                 "ok" if entry["state"] == "idle" else "warn",
             )
 
@@ -672,6 +675,8 @@ class BoardWorker(QThread):
             "forward_ma": detection.forward_ma,
             "discharge_ma": detection.discharge_ma,
             "delta_ma": detection.delta_ma,
+            "initial_forward_ma": detection.initial_forward_ma,
+            "initial_delta_ma": detection.initial_delta_ma,
         }
 
     def _ensure_actuator_available(self, actuator: int) -> None:

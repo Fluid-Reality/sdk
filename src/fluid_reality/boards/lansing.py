@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from logging import Logger
-from typing import Callable, Literal
+from typing import Literal
 
-from ..errors import FirmwareError
 from ..protocol import LineTransport, ProtocolError, Response
 from ..transport import SerialTransport
 from .base import Board
@@ -41,6 +41,8 @@ class ActuatorDetection:
     forward_ma: float
     discharge_ma: float
     delta_ma: float
+    initial_forward_ma: float | None = None
+    initial_delta_ma: float | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,9 @@ class Lansing(Board):
     max_output = 255
     not_connected_delta_ma = 0.1
     error_delta_ma = 3.0
+    initial_detection_error_delta_ma = 10.0
+    initial_detection_duration_s = 0.25
+    conditioned_detection_duration_s = 2.0
     initialization_stages_v = (25.0, 50.0, 100.0, 200.0)
     initialization_stage_duration_s = 30.0
     initialization_phase_interval_s = 0.5
@@ -310,24 +315,76 @@ class Lansing(Board):
 
     def detect_actuator(self, actuator: int) -> ActuatorDetection:
         self._validate_actuator(actuator)
-        group_start = (actuator // 8) * 8
         self.debug(
             "detect.start",
             actuator=actuator,
-            group_start=group_start,
-            group_end=group_start + 7,
+            initial_duration_s=self.initial_detection_duration_s,
+            conditioned_duration_s=self.conditioned_detection_duration_s,
         )
-        for group_actuator in range(group_start, group_start + 8):
-            try:
-                self.raw_command("ACT", group_actuator, 0)
-                self.debug("detect.group_off", actuator=group_actuator)
-            except FirmwareError as exc:
-                if exc.code != "ACT_FAILED":
-                    raise
-                self.debug("detect.group_off.lockout", actuator=group_actuator, error=exc.code)
 
-        diagnosis = self.diagnose_actuator(actuator)
-        detection = self._record_detection(diagnosis)
+        previous_safety = self.safety()
+        baseline_ma = 0.0
+        initial_forward_ma = 0.0
+        conditioned_forward_ma: float | None = None
+        try:
+            self.safety(False)
+            # OUT resets both normal activation and discharge state. Zero every
+            # actuator so the target is the only energized channel in both stages.
+            for other_actuator in range(self.actuator_count):
+                self.set_manual_output(other_actuator, 0, 0)
+            baseline_ma = self.current()
+
+            # Keep the same positive electrode energized continuously across both
+            # measurements. Do not send ACT 0, which would start reverse discharge.
+            self.set_manual_output(actuator, self.max_output, 0)
+            time.sleep(self.initial_detection_duration_s)
+            initial_forward_ma = self.current()
+            initial_delta_ma = abs(initial_forward_ma - baseline_ma)
+            self.debug(
+                "detect.initial",
+                actuator=actuator,
+                baseline_ma=baseline_ma,
+                forward_ma=initial_forward_ma,
+                delta_ma=initial_delta_ma,
+            )
+
+            if initial_delta_ma <= self.initial_detection_error_delta_ma:
+                time.sleep(self.conditioned_detection_duration_s)
+                conditioned_forward_ma = self.current()
+        finally:
+            try:
+                self.set_manual_output(actuator, 0, 0)
+            finally:
+                self.safety(previous_safety)
+                self.debug("detect.safety_restored", actuator=actuator, enabled=previous_safety)
+
+        initial_delta_ma = round(abs(initial_forward_ma - baseline_ma), 6)
+        if conditioned_forward_ma is None:
+            final_forward_ma = initial_forward_ma
+            final_delta_ma = initial_delta_ma
+            state = ActuatorState.ERROR
+        else:
+            final_forward_ma = conditioned_forward_ma
+            final_delta_ma = round(abs(conditioned_forward_ma - baseline_ma), 6)
+            if final_delta_ma < self.not_connected_delta_ma:
+                state = ActuatorState.NOT_CONNECTED
+            elif final_delta_ma < self.error_delta_ma:
+                state = ActuatorState.READY
+            else:
+                state = ActuatorState.ERROR
+
+        detection = ActuatorDetection(
+            actuator=actuator,
+            state=state,
+            baseline_ma=baseline_ma,
+            forward_ma=final_forward_ma,
+            discharge_ma=0.0,
+            delta_ma=final_delta_ma,
+            initial_forward_ma=initial_forward_ma,
+            initial_delta_ma=initial_delta_ma,
+        )
+        self._actuator_states[actuator] = state
+        self._actuator_detections[actuator] = detection
         self.debug("detect.done", detection=detection)
         return detection
 

@@ -191,8 +191,11 @@ Actuators have SDK states:
   `Error`, leave the actuator off, check the physical connection, and contact
   Fluid Reality support before continuing.
 
-Before driving an actuator, call `board.detect(actuator)`. `set_actuator()` only
-works when that actuator is `Ready`.
+Before driving an actuator, call `board.detect(actuator)`. Detection checks the
+forward-current delta after 250 ms against a 10 mA hard limit. If safe, it keeps
+only that actuator continuously forward at maximum output for another 2 seconds
+and classifies the resulting delta. `set_actuator()` only works when that
+actuator is `Ready`.
 
 Actuators may need initialization after storage, shipping, or long periods
 without use. If `detect()` returns `Error`, run `board.initialize(actuator)`.

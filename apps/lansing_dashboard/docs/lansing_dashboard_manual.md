@@ -162,31 +162,34 @@ Automatic detection runs when:
 
 Detection also runs again when you select another actuator group while the board is powered and connected.
 
-During detection, the dashboard:
+During detection, the dashboard processes each selected actuator separately:
 
-1. Commands all actuators in the selected group off.
-2. Runs a diagnostic on each actuator in the group.
-3. Measures baseline current.
-4. Drives the actuator forward and measures forward current.
-5. Compares the current delta between baseline and forward.
-6. Updates each actuator card immediately when that actuator's result is available.
-7. Writes detailed progress to the Event Log.
+1. Uses manual output to cancel activation and discharge and zero all 24 actuators.
+2. Measures baseline current.
+3. Drives only the selected actuator forward at maximum output for 250 ms.
+4. Measures the initial current delta and stops immediately if it exceeds 10 mA.
+5. Otherwise keeps the same forward output continuously active for another 2 seconds.
+6. Measures and classifies the final current delta.
+7. Stops the actuator without reverse discharge and restores the previous safety setting.
+8. Updates the actuator card and writes the two measurements to the Event Log.
 
 ![Autodetection running](lansing_dashboard_manual/images/05_autodetection_running.png)
 
 The detection thresholds are:
 
-| Current Delta | Classification |
+| Stage and current delta | Classification |
 |---|---|
-| Less than `0.10 mA` | `Not connected` |
-| Greater than `3.00 mA` | `Error` |
-| `0.10 mA` through `3.00 mA` | `Ready` |
+| Initial 250 ms delta greater than `10.00 mA` | `Error`; skip the 2-second stage |
+| Final delta less than `0.10 mA` | `Not connected` |
+| Final delta from `0.10 mA` up to but not including `3.00 mA` | `Ready` |
+| Final delta greater than or equal to `3.00 mA` | `Error` |
 
 An actuator classified as `Error` should be initialized before any other corrective action. The initialization process normally recovers an error-state actuator by conditioning it through staged bipolar drive and reducing the excess current drawn during diagnosis. After initialization, the dashboard runs diagnosis again so the actuator can return to `Ready` if the current delta falls back into the acceptable range.
 
 If initialization does not reduce the current draw enough to clear the error state, the `Recover` tool can be used as a secondary corrective tool. Recovery is intended for advanced users only because it applies configurable manual drive with safety temporarily disabled during the procedure.
 
-The Event Log records the detection group, voltage, current, thresholds, per-actuator diagnostic progress, measured baseline and forward current, and final classification.
+The Event Log records baseline, initial forward current and delta, conditioned
+forward current and delta, and the final classification.
 
 ![Autodetection complete](lansing_dashboard_manual/images/06_detection_complete.png)
 

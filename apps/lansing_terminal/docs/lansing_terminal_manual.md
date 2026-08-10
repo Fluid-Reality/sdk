@@ -719,12 +719,13 @@ covering actuators `0-7`.
 
 For each actuator, the SDK:
 
-1. commands every actuator in the same eight-actuator group off;
-2. tolerates a normal `ACT_FAILED` lockout if an actuator is discharging;
-3. runs the firmware diagnostic;
-4. computes the baseline-to-forward current delta;
-5. classifies the actuator; and
-6. stores the result in the current SDK object.
+1. zeros the manual outputs for all 24 actuators, cancelling activation and discharge;
+2. measures baseline current;
+3. drives only the target forward at maximum output for 250 ms;
+4. returns `Error` immediately if that delta exceeds 10 mA;
+5. otherwise keeps the target continuously forward for another 2 seconds;
+6. classifies the final delta and stores the result in the current SDK object; and
+7. stops the target without reverse discharge and restores the previous safety setting.
 
 Examples:
 
@@ -738,7 +739,7 @@ detect group 2
 Text result:
 
 ```text
-Actuator 0: Error, delta 5.14 mA (baseline 1.33, forward 6.47, discharge 6.43)
+Actuator 0: Error, delta 3.20 mA (baseline 1.33, forward 4.53, initial delta 8.10 mA)
 ```
 
 JSON mode first emits a progress record:

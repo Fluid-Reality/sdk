@@ -284,6 +284,8 @@ Fields:
 - `forward_ma: float`
 - `discharge_ma: float`
 - `delta_ma: float`
+- `initial_forward_ma: float | None`
+- `initial_delta_ma: float | None`
 
 Example:
 
@@ -509,8 +511,12 @@ for actuator, state in enumerate(board.actuator_states):
 
 Detect one actuator and return only its classified state.
 
-Detection turns the actuator's group off, runs diagnosis, calculates current
-delta, updates the cached SDK state, and returns:
+Detection uses a two-stage, forward-only current test. It zeros all 24 actuator
+outputs, measures baseline current, and drives only the selected actuator at
+maximum positive output. After 250 ms it measures the initial delta. A delta
+above 10 mA immediately returns `Error`; otherwise the same positive output
+remains continuously active for another 2 seconds and the SDK measures the
+conditioned delta. It then updates the cached SDK state and returns:
 
 - `Ready`
 - `Error`
@@ -539,7 +545,24 @@ print(detection.baseline_ma)
 print(detection.forward_ma)
 print(detection.discharge_ma)
 print(detection.delta_ma)
+print(detection.initial_forward_ma)
+print(detection.initial_delta_ma)
 ```
+
+The two-stage SDK detection never applies reverse/discharge output, so
+`discharge_ma` is `0.0`. `initial_forward_ma` and `initial_delta_ma` contain the
+250 ms measurement. `forward_ma` and `delta_ma` contain the conditioned
+measurement, or the initial measurement when the 10 mA guard stops the test.
+
+Classification rules:
+
+- Initial delta `> 10 mA`: `Error`, without running the 2-second stage.
+- Final delta `< 0.1 mA`: `Not connected`.
+- Final delta `>= 0.1 mA` and `< 3 mA`: `Ready`.
+- Final delta `>= 3 mA`: `Error`.
+
+The SDK restores the previous safety setting and forces the target output to
+zero even when a measurement or transport operation fails.
 
 ### `last_detection(actuator) -> ActuatorDetection | None`
 

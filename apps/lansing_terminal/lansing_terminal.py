@@ -1197,15 +1197,33 @@ class LansingTerminal(cmd.Cmd):
         self._print_detection(detection)
 
     def _print_detection(self, detection: object) -> None:
-        self._emit(
-            "Actuator {actuator}: {state}, delta {delta:.2f} mA "
-            "(baseline {baseline:.2f}, forward {forward:.2f}, discharge {discharge:.2f})".format(
-                actuator=getattr(detection, "actuator"),
-                state=state_name(getattr(detection, "state")),
-                delta=getattr(detection, "delta_ma"),
+        initial_forward = getattr(detection, "initial_forward_ma", None)
+        initial_delta = getattr(detection, "initial_delta_ma", None)
+        if initial_forward is None or initial_delta is None:
+            measurement_text = (
+                "baseline {baseline:.2f}, forward {forward:.2f}, "
+                "discharge {discharge:.2f}"
+            ).format(
                 baseline=getattr(detection, "baseline_ma"),
                 forward=getattr(detection, "forward_ma"),
                 discharge=getattr(detection, "discharge_ma"),
+            )
+        else:
+            measurement_text = (
+                "baseline {baseline:.2f}, initial forward {initial_forward:.2f}, "
+                "initial delta {initial_delta:.2f}, final forward {forward:.2f}"
+            ).format(
+                baseline=getattr(detection, "baseline_ma"),
+                initial_forward=initial_forward,
+                initial_delta=initial_delta,
+                forward=getattr(detection, "forward_ma"),
+            )
+        self._emit(
+            "Actuator {actuator}: {state}, delta {delta:.2f} mA ({measurements})".format(
+                actuator=getattr(detection, "actuator"),
+                state=state_name(getattr(detection, "state")),
+                delta=getattr(detection, "delta_ma"),
+                measurements=measurement_text,
             ),
             actuator=getattr(detection, "actuator"),
             state=state_name(getattr(detection, "state")),
@@ -1213,6 +1231,8 @@ class LansingTerminal(cmd.Cmd):
             baseline_ma=getattr(detection, "baseline_ma"),
             forward_ma=getattr(detection, "forward_ma"),
             discharge_ma=getattr(detection, "discharge_ma"),
+            initial_forward_ma=initial_forward,
+            initial_delta_ma=initial_delta,
         )
 
     def _single_actuator(self, arg: str, usage: str) -> int:
