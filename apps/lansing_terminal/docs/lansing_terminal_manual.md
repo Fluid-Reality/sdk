@@ -722,7 +722,7 @@ For each actuator, the SDK:
 1. zeros the manual outputs for all 24 actuators, cancelling activation and discharge;
 2. measures baseline current;
 3. drives only the target forward at maximum output for 250 ms;
-4. returns `Error` immediately if that delta exceeds 10 mA;
+4. returns `Not connected` below 0.1 mA or `Error` above 10 mA;
 5. otherwise keeps the target continuously forward for another 2 seconds;
 6. classifies the final delta and stores the result in the current SDK object; and
 7. stops the target without reverse discharge and restores the previous safety setting.

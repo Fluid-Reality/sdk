@@ -167,7 +167,8 @@ During detection, the dashboard processes each selected actuator separately:
 1. Uses manual output to cancel activation and discharge and zero all 24 actuators.
 2. Measures baseline current.
 3. Drives only the selected actuator forward at maximum output for 250 ms.
-4. Measures the initial current delta and stops immediately if it exceeds 10 mA.
+4. Measures the initial current delta and stops as `Not connected` below 0.1 mA
+   or `Error` above 10 mA.
 5. Otherwise keeps the same forward output continuously active for another 2 seconds.
 6. Measures and classifies the final current delta.
 7. Stops the actuator without reverse discharge and restores the previous safety setting.
@@ -179,9 +180,9 @@ The detection thresholds are:
 
 | Stage and current delta | Classification |
 |---|---|
+| Initial 250 ms delta less than `0.10 mA` | `Not connected`; skip the 2-second stage |
 | Initial 250 ms delta greater than `10.00 mA` | `Error`; skip the 2-second stage |
-| Final delta less than `0.10 mA` | `Not connected` |
-| Final delta from `0.10 mA` up to but not including `3.00 mA` | `Ready` |
+| Final delta less than `3.00 mA` | `Ready` |
 | Final delta greater than or equal to `3.00 mA` | `Error` |
 
 An actuator classified as `Error` should be initialized before any other corrective action. The initialization process normally recovers an error-state actuator by conditioning it through staged bipolar drive and reducing the excess current drawn during diagnosis. After initialization, the dashboard runs diagnosis again so the actuator can return to `Ready` if the current delta falls back into the acceptable range.

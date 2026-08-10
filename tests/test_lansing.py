@@ -392,12 +392,25 @@ def test_lansing_detect_marks_actuator_ready(monkeypatch):
 
 
 def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
-    transport = FakeTransport(detection_responses(1.0, 1.05, 1.05))
+    transport = FakeTransport(detection_responses(1.0, 1.05, None))
     board = Lansing(transport=transport)
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+    sleeps = []
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
 
     assert board.detect(3) is ActuatorState.NOT_CONNECTED
     assert board.actuator_state(3) is ActuatorState.NOT_CONNECTED
+    assert sleeps == [0.25]
+    assert transport.writes.count("CUR") == 2
+
+
+def test_lansing_detect_uses_only_initial_reading_for_connection(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 1.2, 1.05))
+    board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+
+    assert board.detect(3) is ActuatorState.READY
+    assert board.last_detection(3).initial_delta_ma == 0.2
+    assert board.last_detection(3).delta_ma == 0.05
 
 
 def test_lansing_detect_rejects_high_initial_current_without_conditioning(monkeypatch):

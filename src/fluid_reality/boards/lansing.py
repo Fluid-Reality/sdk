@@ -348,7 +348,10 @@ class Lansing(Board):
                 delta_ma=initial_delta_ma,
             )
 
-            if initial_delta_ma <= self.initial_detection_error_delta_ma:
+            if (
+                initial_delta_ma >= self.not_connected_delta_ma
+                and initial_delta_ma <= self.initial_detection_error_delta_ma
+            ):
                 time.sleep(self.conditioned_detection_duration_s)
                 conditioned_forward_ma = self.current()
         finally:
@@ -362,13 +365,15 @@ class Lansing(Board):
         if conditioned_forward_ma is None:
             final_forward_ma = initial_forward_ma
             final_delta_ma = initial_delta_ma
-            state = ActuatorState.ERROR
+            state = (
+                ActuatorState.NOT_CONNECTED
+                if initial_delta_ma < self.not_connected_delta_ma
+                else ActuatorState.ERROR
+            )
         else:
             final_forward_ma = conditioned_forward_ma
             final_delta_ma = round(abs(conditioned_forward_ma - baseline_ma), 6)
-            if final_delta_ma < self.not_connected_delta_ma:
-                state = ActuatorState.NOT_CONNECTED
-            elif final_delta_ma < self.error_delta_ma:
+            if final_delta_ma < self.error_delta_ma:
                 state = ActuatorState.READY
             else:
                 state = ActuatorState.ERROR

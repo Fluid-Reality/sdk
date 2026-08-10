@@ -567,8 +567,8 @@ class BoardWorker(QThread):
             "info",
         )
         self.message.emit(
-            "Detection: 250 ms forward check (>10.00 mA stops as error), then 2.00 s "
-            "continuous forward; final <0.10 mA not connected, >=3.00 mA error, otherwise ready.",
+            "Detection: 250 ms forward check (<0.10 mA not connected, >10.00 mA error), "
+            "then 2.00 s continuous forward; final >=3.00 mA error, otherwise ready.",
             "info",
         )
         if self._square_actuators:

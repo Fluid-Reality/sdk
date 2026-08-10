@@ -514,9 +514,10 @@ Detect one actuator and return only its classified state.
 Detection uses a two-stage, forward-only current test. It zeros all 24 actuator
 outputs, measures baseline current, and drives only the selected actuator at
 maximum positive output. After 250 ms it measures the initial delta. A delta
-above 10 mA immediately returns `Error`; otherwise the same positive output
-remains continuously active for another 2 seconds and the SDK measures the
-conditioned delta. It then updates the cached SDK state and returns:
+below 0.1 mA immediately returns `Not connected`, while a delta above 10 mA
+immediately returns `Error`. Only the range between those guards proceeds: the
+same positive output remains continuously active for another 2 seconds and the
+SDK measures the conditioned delta. It then updates the cached SDK state and returns:
 
 - `Ready`
 - `Error`
@@ -556,9 +557,9 @@ measurement, or the initial measurement when the 10 mA guard stops the test.
 
 Classification rules:
 
+- Initial delta `< 0.1 mA`: `Not connected`, without running the 2-second stage.
 - Initial delta `> 10 mA`: `Error`, without running the 2-second stage.
-- Final delta `< 0.1 mA`: `Not connected`.
-- Final delta `>= 0.1 mA` and `< 3 mA`: `Ready`.
+- Final delta `< 3 mA`: `Ready`.
 - Final delta `>= 3 mA`: `Error`.
 
 The SDK restores the previous safety setting and forces the target output to

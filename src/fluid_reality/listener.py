@@ -100,11 +100,12 @@ class TcpDeviceListener:
 
     def accept(self, *, timeout: float | None = None) -> TcpDeviceConnection:
         """Accept one client, raising ``TimeoutError`` if ``timeout`` expires."""
-        if self._socket is None:
+        listener = self._socket
+        if listener is None:
             raise RuntimeError("TCP device listener is not running")
-        self._socket.settimeout(timeout)
+        listener.settimeout(timeout)
         try:
-            connection, address = self._socket.accept()
+            connection, address = listener.accept()
         except TimeoutError as exc:
             raise TimeoutError("Timed out waiting for a TCP device client") from exc
         return TcpDeviceConnection(connection, (str(address[0]), int(address[1])))
