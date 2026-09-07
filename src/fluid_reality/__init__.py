@@ -1,7 +1,24 @@
 """Fluid Reality Python SDK."""
 
-from .boards import Lansing
-from .boards.lansing import (
+from .boards import (
+    Board,
+    BluetoothBoard,
+    ConfigurableNetworkBoard,
+    EthernetBoard,
+    Lansing,
+    NetworkBoard,
+    Rockford,
+    WifiBoard,
+    WifiNetwork,
+)
+from .bluetooth import (
+    BluetoothDevice,
+    BluetoothTransport,
+    discover_bluetooth_boards,
+    discover_bluetooth_boards_async,
+    is_bluetooth_endpoint,
+)
+from .boards.board import (
     ActuatorDetection,
     ActuatorState,
     Diagnosis,
@@ -16,13 +33,25 @@ from .errors import (
     ProtocolError,
     TransportError,
 )
+from .connection import (
+    ConnectionProfile,
+    load_connection_file,
+    open_board_from_connection_file,
+)
 from .listener import TcpDeviceConnection, TcpDeviceListener
 from .transport import is_virtual_port, list_ports
 
 __all__ = [
     "ActuatorDetection",
     "ActuatorState",
+    "Board",
+    "BluetoothBoard",
+    "BluetoothDevice",
+    "BluetoothTransport",
+    "ConfigurableNetworkBoard",
+    "ConnectionProfile",
     "Diagnosis",
+    "EthernetBoard",
     "ErrorInfo",
     "FirmwareError",
     "FluidRealityError",
@@ -30,12 +59,21 @@ __all__ = [
     "LansingConfig",
     "LansingVersion",
     "ManualOutput",
+    "NetworkBoard",
+    "Rockford",
+    "WifiNetwork",
     "ProtocolError",
     "TcpDeviceConnection",
     "TcpDeviceListener",
     "TransportError",
+    "WifiBoard",
+    "discover_bluetooth_boards",
+    "discover_bluetooth_boards_async",
+    "is_bluetooth_endpoint",
     "is_virtual_port",
     "list_ports",
+    "load_connection_file",
+    "open_board_from_connection_file",
 ]
 
-__version__ = "0.1.7"
+__version__ = "0.2.0"

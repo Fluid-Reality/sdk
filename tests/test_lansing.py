@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from fluid_reality import ActuatorState, FirmwareError, Lansing
+from fluid_reality import ActuatorState, Diagnosis, FirmwareError, Lansing
 
 
 class FakeTransport:
@@ -36,6 +36,17 @@ def test_lansing_reads_version_fields():
     assert transport.writes == ["VER"]
 
 
+def test_platform_diagnostic_lines_do_not_break_protocol_responses():
+    diagnostic = "E (30797) wifi:sta is connecting, cannot set config"
+    transport = FakeTransport(
+        [diagnostic, "OK:FW>Lansing,VERSION>0.1,PROTO>0.1"]
+    )
+    board = Lansing(transport=transport)
+
+    assert board.version()["FW"] == "Lansing"
+    assert board.debug_lines == (diagnostic,)
+
+
 def test_lansing_default_timeout_allows_slow_board_operations(monkeypatch):
     created = {}
 
@@ -51,7 +62,7 @@ def test_lansing_default_timeout_allows_slow_board_operations(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr("fluid_reality.boards.lansing.SerialTransport", FakeSerialTransport)
+    monkeypatch.setattr("fluid_reality.boards.board.SerialTransport", FakeSerialTransport)
 
     board = Lansing("COM16")
 
@@ -327,7 +338,6 @@ def test_lansing_typed_config_helpers():
         "CFG DEBUG ON",
     ]
 
-
 def test_lansing_actuators_start_unknown():
     board = Lansing(transport=FakeTransport())
 
@@ -362,7 +372,7 @@ def test_lansing_detect_marks_actuator_ready(monkeypatch):
     transport = FakeTransport(detection_responses(1.0, 9.0, 2.5))
     board = Lansing(transport=transport)
     sleeps = []
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", sleeps.append)
 
     assert board.detect(0) is ActuatorState.READY
 
@@ -395,7 +405,7 @@ def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
     transport = FakeTransport(detection_responses(1.0, 1.05, None))
     board = Lansing(transport=transport)
     sleeps = []
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", sleeps.append)
 
     assert board.detect(3) is ActuatorState.NOT_CONNECTED
     assert board.actuator_state(3) is ActuatorState.NOT_CONNECTED
@@ -403,21 +413,77 @@ def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
     assert transport.writes.count("CUR") == 2
 
 
-def test_lansing_detect_uses_only_initial_reading_for_connection(monkeypatch):
+def test_lansing_detect_never_accepts_current_below_baseline(monkeypatch):
+    transport = FakeTransport(detection_responses(1.17, 1.04, None))
+    board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
+
+    assert board.detect(6) is ActuatorState.NOT_CONNECTED
+    detection = board.last_detection(6)
+    assert detection is not None
+    assert detection.baseline_ma == 1.17
+    assert detection.forward_ma == 1.04
+    assert detection.delta_ma == 0.13
+
+
+def test_conditioned_detection_rejects_current_that_falls_below_baseline(monkeypatch):
+    transport = FakeTransport(detection_responses(1.17, 1.80, 1.04))
+    board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
+
+    assert board.detect(7) is ActuatorState.NOT_CONNECTED
+
+
+def test_diagnosis_never_accepts_current_below_baseline():
+    board = Lansing(transport=FakeTransport())
+
+    detection = board.classify_diagnosis(
+        Diagnosis(actuator=6, baseline_ma=1.17, forward_ma=1.04, discharge_ma=1.10)
+    )
+
+    assert detection.state is ActuatorState.NOT_CONNECTED
+
+
+def test_lansing_detect_rejects_conditioned_delta_below_connection_limit(monkeypatch):
     transport = FakeTransport(detection_responses(1.0, 1.2, 1.05))
     board = Lansing(transport=transport)
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
-    assert board.detect(3) is ActuatorState.READY
+    assert board.detect(3) is ActuatorState.NOT_CONNECTED
     assert board.last_detection(3).initial_delta_ma == 0.2
     assert board.last_detection(3).delta_ma == 0.05
+
+
+def test_reported_detection_limit_applies_to_conditioned_reading(monkeypatch):
+    transport = FakeTransport(detection_responses(0.96, 1.40, 1.18))
+    board = Lansing(transport=transport)
+    board.not_connected_delta_ma = 0.34
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
+
+    assert board.detect(1) is ActuatorState.NOT_CONNECTED
+    assert board.last_detection(1).delta_ma == pytest.approx(0.22)
+
+
+def test_lansing_detect_reuses_supplied_baseline_without_measuring_it(monkeypatch):
+    responses = ["OK:SAFE>ON", "OK:CFG_SAFE", *(["OK:OUT"] * Lansing.actuator_count)]
+    responses.extend(["OK:OUT", "OK:1.20", "OK:1.05", "OK:OUT", "OK:CFG_SAFE"])
+    transport = FakeTransport(responses)
+    board = Lansing(transport=transport)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
+
+    detection = board.detect_actuator(3, baseline_ma=1.0)
+
+    assert detection.baseline_ma == 1.0
+    assert detection.initial_forward_ma == 1.2
+    assert detection.forward_ma == 1.05
+    assert transport.writes.count("CUR") == 2
 
 
 def test_lansing_detect_rejects_high_initial_current_without_conditioning(monkeypatch):
     transport = FakeTransport(detection_responses(1.0, 11.01, None))
     board = Lansing(transport=transport)
     sleeps = []
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", sleeps.append)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", sleeps.append)
 
     assert board.detect(4) is ActuatorState.ERROR
     assert board.actuator_state(4) is ActuatorState.ERROR
@@ -429,7 +495,7 @@ def test_lansing_detect_rejects_high_initial_current_without_conditioning(monkey
 def test_lansing_detect_marks_conditioned_current_at_three_ma_as_error(monkeypatch):
     transport = FakeTransport(detection_responses(1.0, 5.0, 4.0))
     board = Lansing(transport=transport)
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
     assert board.detect(4) is ActuatorState.ERROR
     assert board.last_detection(4).delta_ma == 3.0
@@ -456,7 +522,7 @@ def test_lansing_detect_stops_output_and_restores_safety_when_measurement_fails(
         return result
 
     monkeypatch.setattr(board, "current", current)
-    monkeypatch.setattr("fluid_reality.boards.lansing.time.sleep", lambda _duration: None)
+    monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
     with pytest.raises(RuntimeError, match="current read failed"):
         board.detect(2)

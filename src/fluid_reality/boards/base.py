@@ -10,8 +10,8 @@ from ..errors import ErrorInfo
 from ..protocol import LineTransport, TextProtocol
 
 
-class Board:
-    """Base class for command/response Fluid Reality boards."""
+class TransportBoard:
+    """Low-level transport and protocol lifecycle used by :class:`Board`."""
 
     def __init__(
         self,

@@ -12,16 +12,21 @@ from typing import Any
 from PySide6.QtCore import QProcess, QSettings, Qt, Signal
 from PySide6.QtGui import QFontDatabase, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
+    QApplication, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
     QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 APP_ROOT = Path(__file__).resolve().parent
+APPS_ROOT = APP_ROOT.parent
+if str(APPS_ROOT) not in sys.path:
+    sys.path.insert(0, str(APPS_ROOT))
 STANDARD_CONFIG_DIR = APP_ROOT / "standard_configs"
 LOGO_PATH = APP_ROOT.parent / "lansing_dashboard" / "assets" / "fluid_reality_logo_transparent.png"
 GROUP_COUNT = 3
 ACTUATORS_PER_GROUP = 8
+
+from shared.toggle import LabeledToggle
 
 
 @dataclass
@@ -308,7 +313,7 @@ class DesignerWindow(QMainWindow):
         top = QHBoxLayout()
         top.addWidget(QLabel("Actuator groups", objectName="SectionTitle"))
         top.addStretch()
-        self.group_enable = QCheckBox("Enable group")
+        self.group_enable = LabeledToggle("Enable group")
         self.group_enable.toggled.connect(self._toggle_group)
         top.addWidget(self.group_enable)
         layout.addLayout(top)
@@ -964,8 +969,6 @@ QPushButton#RunButton[running="true"] { background: #b4232c; border-color: #b423
 QPlainTextEdit#SimulatorLog { background: #17191d; color: #e8edf5; border: 1px solid #2c3038; border-radius: 8px; padding: 8px; font-family: Consolas, monospace; }
 QLineEdit, QDoubleSpinBox, QSpinBox { background: white; border: 1px solid #c8cbd1; border-radius: 7px; padding: 7px 9px; min-height: 20px; }
 QLineEdit:focus, QDoubleSpinBox:focus { border: 2px solid #0050bd; }
-QCheckBox { spacing: 8px; font-weight: 700; }
-QCheckBox::indicator { width: 19px; height: 19px; }
 QWidget:disabled { color: #8c95a0; }
 """
 

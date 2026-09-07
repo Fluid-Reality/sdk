@@ -1,4 +1,4 @@
-"""Command-line serial-to-TCP Device Bridge."""
+"""Command-line serial-to-TCP/TLS Device Bridge."""
 
 from __future__ import annotations
 
@@ -31,10 +31,46 @@ def tcp_endpoint(value: str) -> tuple[str, int]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        description="Bridge a physical serial device to raw TCP and optionally trace every byte.",
+        description="Bridge a physical serial device to TCP or TLS and optionally trace every byte.",
     )
     result.add_argument("serial_port", nargs="?", help="Physical port, such as COM9 or /dev/ttyACM0")
-    result.add_argument("--tcp", default=("127.0.0.1", 8765), type=tcp_endpoint, metavar="HOST:PORT")
+    result.add_argument(
+        "--tcp", type=tcp_endpoint, metavar="HOST:PORT",
+        help="TCP bind address; overrides the saved configuration",
+    )
+    result.add_argument(
+        "--config",
+        type=Path,
+        default=Path.home() / ".fluidreality" / "device_bridge.json",
+        metavar="FILE",
+        help="Persistent bridge network configuration file",
+    )
+    auth = result.add_mutually_exclusive_group()
+    auth.add_argument(
+        "--token",
+        help="Require the SDK NET AUTH handshake with this access token",
+    )
+    auth.add_argument(
+        "--no-token",
+        action="store_true",
+        help="Disable saved access-token authentication",
+    )
+    result.add_argument(
+        "--tls-cert",
+        type=Path,
+        metavar="FILE",
+        help="PEM server certificate; requires --tls-key",
+    )
+    result.add_argument(
+        "--tls-key",
+        type=Path,
+        metavar="FILE",
+        help="PEM private key matching --tls-cert",
+    )
+    result.add_argument(
+        "--tls-key-password",
+        help="Password for an encrypted TLS private key",
+    )
     result.add_argument("--baud", type=int, default=250000)
     result.add_argument("--alias", default="COM66", help="SDK virtual-port name shown in setup hints")
     result.add_argument("--list-ports", action="store_true", help="List physical serial ports and exit")
@@ -79,6 +115,10 @@ def run(arguments: argparse.Namespace) -> int:
         return 0
     if not arguments.serial_port:
         parser().error("serial_port is required unless --list-ports is used")
+    if (arguments.tls_cert is None) != (arguments.tls_key is None):
+        parser().error("--tls-cert and --tls-key must be provided together")
+    if arguments.tls_key_password and arguments.tls_key is None:
+        parser().error("--tls-key-password requires --tls-key")
 
     log_file: TextIO | None = None
     if arguments.log:
@@ -95,7 +135,7 @@ def run(arguments: argparse.Namespace) -> int:
         if log_file is not None:
             print(line, file=log_file, flush=True)
 
-    host, port = arguments.tcp
+    host, port = arguments.tcp if arguments.tcp is not None else (None, None)
     bridge = DeviceBridge(
         arguments.serial_port,
         baudrate=arguments.baud,
@@ -110,6 +150,12 @@ def run(arguments: argparse.Namespace) -> int:
         xonxoff=arguments.xonxoff,
         rtscts=arguments.rtscts,
         dsrdtr=arguments.dsrdtr,
+        network_token=arguments.token,
+        clear_network_token=arguments.no_token,
+        tls_certfile=str(arguments.tls_cert) if arguments.tls_cert else None,
+        tls_keyfile=str(arguments.tls_key) if arguments.tls_key else None,
+        tls_key_password=arguments.tls_key_password,
+        config_file=str(arguments.config),
         trace=trace if arguments.trace or log_file is not None else None,
         status=status,
     )
@@ -119,8 +165,17 @@ def run(arguments: argparse.Namespace) -> int:
         print(f'PowerShell:     $env:FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
         print(f"Command Prompt: set FLUID_REALITY_VIRTUAL_PORTS={mapping}")
         print(f'macOS/Linux:    export FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
-        if not is_loopback(host):
-            print("WARNING: TCP is unauthenticated and unencrypted; use only on a trusted network.")
+        if bridge.network_token:
+            print("Authentication: required (use the --token value in the client)")
+        if bridge.tls_certfile:
+            print(f"TLS trust file: {bridge.tls_certfile}")
+        print(f"Network configuration: {arguments.config}")
+        active_host = bridge.address[0]
+        if not is_loopback(active_host):
+            if not bridge.network_token:
+                print("WARNING: remote clients are not authenticated; add --token.")
+            if not bridge.tls_certfile:
+                print("WARNING: traffic is unencrypted; add --tls-cert and --tls-key.")
             print("Remote clients must replace the bind address with this computer's reachable IP.")
         print("Press Ctrl+C to stop.")
         wait_until_stopped(bridge)

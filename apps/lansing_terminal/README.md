@@ -13,6 +13,8 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 
 ## Features
 
+- Connect over USB serial, direct TCP/TLS endpoints, configured virtual-port
+  aliases, or a `ble://` Bluetooth device identifier.
 - List physical serial ports and configured virtual-port aliases.
 - Control the high-voltage power supply and PSU connection independently.
 - Read voltage, current, configuration, status, and runtime counters.
@@ -72,7 +74,7 @@ Start an interactive session and connect from the terminal:
 ```text
 python lansing_terminal.py
 lansing(disconnected)> ports
-lansing(disconnected)> connect <serial-port-or-tcp-endpoint>
+lansing(disconnected)> connect <serial-tcp-tls-or-ble-endpoint>
 lansing> psu on
 lansing> voltage
 lansing> psuc on
@@ -105,6 +107,14 @@ aliases may be separated by semicolons. A TCP endpoint can also be passed direct
 
 ```powershell
 python lansing_terminal.py --port tcp://127.0.0.1:8765
+```
+
+TLS and Bluetooth endpoints can be passed directly as well. Install the app's
+requirements first so the optional Bluetooth transport is available:
+
+```powershell
+python lansing_terminal.py --port tls://rockford.local:8765
+python lansing_terminal.py --port ble://DEVICE-ID
 ```
 
 Run a fail-fast command sequence:

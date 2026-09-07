@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import socket
+import ssl
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -16,11 +18,11 @@ VIRTUAL_PORTS_ENV = "FLUID_REALITY_VIRTUAL_PORTS"
 def _parse_tcp_endpoint(endpoint: str, *, context: str) -> None:
     try:
         parsed = urlparse(endpoint)
-        valid_address = parsed.scheme.lower() == "tcp" and parsed.hostname is not None and parsed.port is not None
+        valid_address = parsed.scheme.lower() in {"tcp", "tls"} and parsed.hostname is not None and parsed.port is not None
     except ValueError as exc:
-        raise TransportError(f"Invalid {context} {endpoint!r}; expected tcp://host:port") from exc
+        raise TransportError(f"Invalid {context} {endpoint!r}; expected tcp://host:port or tls://host:port") from exc
     if not valid_address:
-        raise TransportError(f"Invalid {context} {endpoint!r}; expected tcp://host:port")
+        raise TransportError(f"Invalid {context} {endpoint!r}; expected tcp://host:port or tls://host:port")
     if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
         raise TransportError(
             f"Invalid {context} {endpoint!r}; paths, parameters, queries, and fragments are not supported"
@@ -39,12 +41,12 @@ def _endpoint_aliases() -> dict[str, tuple[str, str]]:
             continue
         if "=" not in entry:
             raise TransportError(
-                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port"
+                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port or PORT=tls://host:port"
             )
         alias, endpoint = (part.strip() for part in entry.split("=", 1))
         if not alias or not endpoint:
             raise TransportError(
-                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port"
+                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port or PORT=tls://host:port"
             )
         _parse_tcp_endpoint(endpoint, context=f"endpoint for alias {alias!r}")
         aliases[alias.casefold()] = (alias, endpoint)
@@ -52,8 +54,8 @@ def _endpoint_aliases() -> dict[str, tuple[str, str]]:
 
 
 def is_virtual_port(port: str) -> bool:
-    """Return whether ``port`` is a direct TCP endpoint or configured alias."""
-    return port.lower().startswith("tcp://") or port.casefold() in _endpoint_aliases()
+    """Return whether ``port`` is a direct TCP/TLS endpoint or configured alias."""
+    return port.lower().startswith(("tcp://", "tls://", "ble://")) or port.casefold() in _endpoint_aliases()
 
 
 def list_ports() -> list[str]:
@@ -82,6 +84,10 @@ class _SocketBackend:
         *,
         timeout: float,
         write_timeout: float | None,
+        tls_ca_file: str | None = None,
+        tls_ca_data: str | None = None,
+        tls_fingerprint: str | None = None,
+        tls_server_hostname: str | None = None,
     ) -> None:
         _parse_tcp_endpoint(endpoint, context="TCP endpoint")
         parsed = urlparse(endpoint)
@@ -89,13 +95,46 @@ class _SocketBackend:
         self.timeout = timeout
         self.write_timeout = write_timeout
         self._receive_buffer = bytearray()
+        raw_socket: socket.socket | None = None
         try:
-            self._socket = socket.create_connection(
+            raw_socket = socket.create_connection(
                 (parsed.hostname, parsed.port),
                 timeout=timeout,
             )
+            if parsed.scheme.lower() == "tls":
+                fingerprint_text = (tls_fingerprint or "").strip().lower()
+                normalized_fingerprint = fingerprint_text.replace(":", "").replace(" ", "")
+                if fingerprint_text and (
+                    len(normalized_fingerprint) != 64
+                    or any(character not in "0123456789abcdef" for character in normalized_fingerprint)
+                ):
+                    raise ValueError(
+                        "TLS certificate fingerprint must contain 64 SHA-256 hex digits"
+                    )
+                if normalized_fingerprint and tls_ca_file is None and tls_ca_data is None:
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                else:
+                    context = ssl.create_default_context(cafile=tls_ca_file)
+                    if tls_ca_data is not None:
+                        context.load_verify_locations(cadata=tls_ca_data)
+                self._socket = context.wrap_socket(
+                    raw_socket,
+                    server_hostname=tls_server_hostname or parsed.hostname,
+                )
+                if normalized_fingerprint:
+                    peer_certificate = self._socket.getpeercert(binary_form=True)
+                    actual_fingerprint = hashlib.sha256(peer_certificate).hexdigest()
+                    if actual_fingerprint != normalized_fingerprint:
+                        self._socket.close()
+                        raise ssl.SSLError("TLS certificate fingerprint does not match the board")
+            else:
+                self._socket = raw_socket
             self._socket.settimeout(timeout)
         except (OSError, ValueError) as exc:
+            if raw_socket is not None:
+                raw_socket.close()
             raise TransportError(
                 f"Could not connect to redirected transport {endpoint!r}: {exc}"
             ) from exc
@@ -149,12 +188,21 @@ class _SocketBackend:
     def close(self) -> None:
         self._socket.close()
 
+    def authenticate(self, token: str) -> None:
+        """Authenticate a physical Fluid Reality TCP endpoint."""
+
+        self.write(f"NET AUTH {token}\n".encode("ascii"))
+        response = self.readline().decode("ascii", errors="replace").strip("\r\n")
+        if response != "OK:NET,OP>AUTH":
+            self.close()
+            raise TransportError("TCP firmware authentication failed")
+
 
 class SerialTransport:
     """Line-oriented serial transport with selective virtual-port routing.
 
-    ``FLUID_REALITY_VIRTUAL_PORTS`` maps selected port aliases to TCP endpoints, for
-    example ``COM66=tcp://127.0.0.1:8765``. Only an exact alias selection is
+    ``FLUID_REALITY_VIRTUAL_PORTS`` maps selected port aliases to TCP or TLS endpoints,
+    for example ``COM66=tls://rockford.local:8765``. Only an exact alias selection is
     redirected; every other port continues through the physical serial layer.
     """
 
@@ -165,11 +213,16 @@ class SerialTransport:
         baudrate: int = 115200,
         timeout: float = 1.0,
         write_timeout: float | None = 1.0,
+        network_token: str | None = None,
+        tls_ca_file: str | None = None,
+        tls_ca_data: str | None = None,
+        tls_fingerprint: str | None = None,
+        tls_server_hostname: str | None = None,
         **serial_kwargs: Any,
     ) -> None:
         aliases = _endpoint_aliases()
         selected_endpoint = (
-            port if port.lower().startswith("tcp://")
+            port if port.lower().startswith(("tcp://", "tls://"))
             else aliases.get(port.casefold(), ("", None))[1]
         )
         self.port = port
@@ -181,7 +234,13 @@ class SerialTransport:
                 selected_endpoint,
                 timeout=timeout,
                 write_timeout=write_timeout,
+                tls_ca_file=tls_ca_file,
+                tls_ca_data=tls_ca_data,
+                tls_fingerprint=tls_fingerprint,
+                tls_server_hostname=tls_server_hostname,
             )
+            if network_token is not None:
+                self._serial.authenticate(network_token)
         else:
             try:
                 import serial
@@ -227,8 +286,13 @@ class SerialTransport:
     def drain_lines(self, *, timeout: float = 0.05, max_lines: int = 50) -> tuple[str, ...]:
         lines: list[str] = []
         original_timeout = self._serial.timeout
+        # A serial-to-network bridge may spend up to one serial polling interval
+        # receiving the firmware's response before relaying it to this socket.
+        # Keep the short direct-serial drain, but allow redirected connections
+        # enough time to consume the expected text-mode synchronization error.
+        drain_timeout = max(timeout, 0.25) if self.redirected else timeout
         try:
-            self._serial.timeout = timeout
+            self._serial.timeout = drain_timeout
             for _ in range(max_lines):
                 data = self._serial.readline()
                 if not data:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import threading
 from types import TracebackType
 
@@ -60,21 +61,52 @@ class TcpDeviceConnection:
 
 
 class TcpDeviceListener:
-    """Synchronous loopback TCP listener for raw simulated-device byte streams.
+    """Synchronous TCP/TLS listener for raw simulated-device byte streams.
 
     The listener performs no decoding, line splitting, buffering, or framing.
     Device protocol implementations receive exactly the bytes carried by TCP.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765, *, backlog: int = 1) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        *,
+        backlog: int = 1,
+        tls_certfile: str | None = None,
+        tls_keyfile: str | None = None,
+        tls_key_password: str | None = None,
+        tls_handshake_timeout: float = 5.0,
+    ) -> None:
+        if (tls_certfile is None) != (tls_keyfile is None):
+            raise ValueError("TLS certificate and private key must be provided together")
+        if tls_handshake_timeout <= 0:
+            raise ValueError("TLS handshake timeout must be greater than zero")
         self.host = host
         self.port = port
         self.backlog = backlog
+        self.tls_certfile = tls_certfile
+        self.tls_keyfile = tls_keyfile
+        self.tls_key_password = tls_key_password
+        self.tls_handshake_timeout = tls_handshake_timeout
         self._socket: socket.socket | None = None
+        self._tls_context: ssl.SSLContext | None = None
 
     def start(self) -> TcpDeviceListener:
         if self._socket is not None:
             raise RuntimeError("TCP device listener is already running")
+        tls_context: ssl.SSLContext | None = None
+        if self.tls_certfile is not None and self.tls_keyfile is not None:
+            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            try:
+                tls_context.load_cert_chain(
+                    self.tls_certfile,
+                    self.tls_keyfile,
+                    self.tls_key_password,
+                )
+            except (OSError, ssl.SSLError) as exc:
+                raise TransportError(f"Could not load TLS server credentials: {exc}") from exc
+
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -84,6 +116,7 @@ class TcpDeviceListener:
             listener.close()
             raise
         self._socket = listener
+        self._tls_context = tls_context
         return self
 
     @property
@@ -96,7 +129,8 @@ class TcpDeviceListener:
     @property
     def endpoint(self) -> str:
         host, port = self.address
-        return f"tcp://{host}:{port}"
+        scheme = "tls" if self._tls_context is not None else "tcp"
+        return f"{scheme}://{host}:{port}"
 
     def accept(self, *, timeout: float | None = None) -> TcpDeviceConnection:
         """Accept one client, raising ``TimeoutError`` if ``timeout`` expires."""
@@ -108,12 +142,25 @@ class TcpDeviceListener:
             connection, address = listener.accept()
         except TimeoutError as exc:
             raise TimeoutError("Timed out waiting for a TCP device client") from exc
+        if self._tls_context is not None:
+            raw_connection = connection
+            try:
+                raw_connection.settimeout(self.tls_handshake_timeout)
+                connection = self._tls_context.wrap_socket(
+                    raw_connection,
+                    server_side=True,
+                )
+                connection.settimeout(None)
+            except (OSError, ssl.SSLError) as exc:
+                raw_connection.close()
+                raise TransportError(f"TLS handshake failed: {exc}") from exc
         return TcpDeviceConnection(connection, (str(address[0]), int(address[1])))
 
     def close(self) -> None:
         if self._socket is not None:
             self._socket.close()
             self._socket = None
+        self._tls_context = None
 
     def __enter__(self) -> TcpDeviceListener:  # noqa: PYI034 -- Python 3.10 has no typing.Self
         return self.start()

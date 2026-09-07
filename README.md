@@ -1,6 +1,6 @@
 # Fluid Reality SDK
 
-Python SDK for Fluid Reality Lansing Development Kit hardware.
+Python SDK for Fluid Reality Lansing, Rockford, and compatible future hardware.
 
 The package name on PyPI is `fluid-reality`; the Python import package is
 `fluid_reality`.
@@ -13,6 +13,38 @@ Use Python 3.10 or newer.
 python -m pip install --upgrade pip
 python -m pip install fluid-reality
 ```
+
+For Bluetooth connectivity, install the optional Bleak dependency:
+
+```bash
+python -m pip install "fluid-reality[bluetooth]"
+```
+
+### Bluetooth
+
+Rockford uses the same command protocol over USB, TCP/TLS, and Bluetooth LE:
+
+```python
+from fluid_reality import Rockford, discover_bluetooth_boards
+
+devices = discover_bluetooth_boards(timeout=5)
+with Rockford(devices[0].endpoint, network_token="optional-token") as board:
+    print(board.firmware_version())
+    print(board.status())
+```
+
+Bluetooth connection files are also supported:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: bluetooth
+device: Rockford-3D3731
+pair: true
+access_token: optional-token
+```
+
+Open one with `Rockford.from_connection_file("rockford-bluetooth.yaml")`.
 
 ## Find the Serial Port
 
@@ -61,10 +93,64 @@ print(list_ports())
 
 Every returned value can be passed directly to `Lansing(...)`.
 
+Rockford firmware 1.0 can also expose the physical board directly over Wi-Fi.
+Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford("tcp://192.168.1.64:8765", network_token="your-device-token")
+print(board.network_status())
+```
+
+Connections can also be stored in a validated YAML profile and opened directly:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford.from_connection_file("rockford.connection.yaml")
+```
+
+The profile supports serial, Bluetooth LE, TCP, and TLS transports. A TLS
+profile can embed the public server certificate so it remains portable, or
+reference a certificate file relative to the YAML file. Bluetooth profiles can
+request operating-system pairing. Profiles may contain an access token and
+should therefore be stored and shared as private configuration. Private keys
+are never part of a client connection profile.
+
+`NetworkBoard` marks any board that can be reached over TCP/TLS, including a
+board piggybacking a host whose network is not device-configurable.
+`ConfigurableNetworkBoard` adds interface-neutral IP, TCP server,
+authentication, diagnostics, and TLS provisioning. `WifiBoard` adds Wi-Fi
+discovery and credentials, while `EthernetBoard` adds wired-link control. A
+connection-only, Wi-Fi-only, Ethernet-only, or dual-interface board can
+therefore expose exactly the features its hardware supports. Capability classes
+are designed for cooperative multiple inheritance:
+
+```python
+from fluid_reality import BluetoothBoard, EthernetBoard, WifiBoard
+
+class FutureBoard(WifiBoard, EthernetBoard, BluetoothBoard):
+    actuator_count = 16
+```
+
+For an externally managed network, inherit only from `NetworkBoard`; SDK and
+dashboard TCP/TLS connections remain available, but Network Setup does not send
+device-side `NET` commands.
+
+New capability classes should inherit from `Board`, avoid duplicating board
+state, and use `super()` in any constructor they add. This keeps the shared
+`Board` base present only once in the method-resolution order.
+
 To inspect exact TX/RX traffic or expose a physical board to another computer, run
 the terminal-only [Device Bridge](apps/device_bridge/README.md). It maps
 an SDK virtual alias to a physical serial port and can print or save binary-safe
-hexadecimal and ASCII traces.
+hexadecimal and ASCII traces. Its client endpoint can use raw TCP or TLS and can
+require the SDK's network-token authentication handshake. Its SDK-facing
+`DeviceBridgeBoard` inherits from `ConfigurableNetworkBoard`. It handles all
+`NET` commands inside the bridge, exposes its host TCP/TLS listener as the
+configurable interface, and never forwards `NET` traffic to the serial board.
+Its configuration is persisted with timestamped backups.
 
 ### Developing simulated-device listeners
 
@@ -230,13 +316,23 @@ examples, see [docs/api_reference.md](docs/api_reference.md).
 
 ## Dashboard
 
-The repository includes a desktop dashboard for connecting to a Lansing board,
-turning the power supply and output connection on or off, viewing voltage and
-current, detecting actuator state, initializing actuators, diagnosing actuators,
-running recovery, and starting square-wave output.
+The repository includes a universal desktop dashboard for boards implementing
+the shared `Board` protocol. It connects over USB serial, Bluetooth LE, TCP, or
+TLS and provides the supported power, telemetry, detection, initialization,
+diagnosis, recovery, and square-wave controls.
 
-See [apps/lansing_dashboard/README.md](apps/lansing_dashboard/README.md) for
-installation and usage instructions.
+See [apps/fluidreality_dashboard/README.md](apps/fluidreality_dashboard/README.md)
+for installation and usage instructions. The historical
+`apps/lansing_dashboard/app.py` command is retained as a compatibility launcher
+for the same application.
+
+## Network Configuration
+
+The reusable [Network Configuration app](apps/network_config/README.md) can
+configure any board class that inherits from `NetworkBoard`. It discovers the
+board's network interfaces and shows only the relevant Wi-Fi and/or Ethernet
+controls, with per-interface IPv4 settings, TCP binding, TLS, and access-token
+management.
 
 ## Terminal
 

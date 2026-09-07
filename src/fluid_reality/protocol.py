@@ -123,6 +123,18 @@ class TextProtocol:
                     self.debug_callback(line)
                 continue
 
+            # ESP-IDF can emit driver diagnostics on the USB serial stream. They
+            # are out-of-band diagnostics, not command responses, so preserve
+            # them as debug lines and continue waiting for the framed OK/ER line.
+            if self._is_platform_diagnostic(line):
+                self.debug_lines.append(line)
+                self.debug_out.emit("firmware", "platform_debug", line=line)
+                if self.log_debug_messages and self.debug_logger is not None:
+                    self.debug_logger.debug(line)
+                if self.debug_callback is not None:
+                    self.debug_callback(line)
+                continue
+
             response = parse_response_line(line)
             if response.status == "ER":
                 code = response.error_code
@@ -149,6 +161,15 @@ class TextProtocol:
             )
             responses.append(response)
         return responses
+
+    @staticmethod
+    def _is_platform_diagnostic(line: str) -> bool:
+        return (
+            len(line) > 4
+            and line[0] in "EWIDV"
+            and line[1:3] == " ("
+            and ") " in line
+        )
 
     @staticmethod
     def format_command(command: str, params: Iterable[object]) -> str:

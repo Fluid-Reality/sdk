@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import socket
 import threading
 import time
@@ -160,3 +161,134 @@ def test_unmapped_com_port_uses_physical_serial(monkeypatch):
         assert opened["port"] == "COM9"
     finally:
         transport.close()
+
+
+def test_tcp_transport_authenticates_without_logging_token():
+    server = socket.create_server(("127.0.0.1", 0))
+    host, port = server.getsockname()
+    received: list[bytes] = []
+
+    def authenticate() -> None:
+        connection, _address = server.accept()
+        with connection:
+            received.append(connection.recv(256))
+            connection.sendall(b"OK:NET,OP>AUTH\n")
+        server.close()
+
+    thread = threading.Thread(target=authenticate, daemon=True)
+    thread.start()
+    transport = SerialTransport(f"tcp://{host}:{port}", network_token="secret", timeout=0.5)
+    transport.close()
+    thread.join(timeout=1.0)
+
+    assert received == [b"NET AUTH secret\n"]
+
+
+def test_tcp_transport_rejects_failed_authentication():
+    server = socket.create_server(("127.0.0.1", 0))
+    host, port = server.getsockname()
+
+    def reject() -> None:
+        connection, _address = server.accept()
+        with connection:
+            connection.recv(256)
+            connection.sendall(b"ER:NET,OP>AUTH,REASON>FAILED\n")
+        server.close()
+
+    thread = threading.Thread(target=reject, daemon=True)
+    thread.start()
+    with pytest.raises(TransportError, match="authentication failed"):
+        SerialTransport(f"tcp://{host}:{port}", network_token="wrong", timeout=0.5)
+    thread.join(timeout=1.0)
+
+
+def test_redirected_transport_drains_delayed_text_mode_response():
+    server = socket.create_server(("127.0.0.1", 0))
+    host, port = server.getsockname()
+
+    def delayed_response() -> None:
+        connection, _address = server.accept()
+        with connection:
+            connection.recv(256)
+            time.sleep(0.12)
+            connection.sendall(b"ER:BAD_COMMAND\n")
+            time.sleep(0.35)
+        server.close()
+
+    thread = threading.Thread(target=delayed_response, daemon=True)
+    thread.start()
+    transport = SerialTransport(f"tcp://{host}:{port}", timeout=0.5)
+    board = Lansing(transport=transport)
+    try:
+        assert board.force_text_mode() == ("ER:BAD_COMMAND",)
+    finally:
+        board.close()
+    thread.join(timeout=1.0)
+
+
+def test_tls_transport_accepts_a_pinned_sha256_fingerprint(monkeypatch):
+    certificate_der = b"test board certificate"
+
+    class FakeSocket:
+        def __init__(self):
+            self.timeout = None
+
+        def settimeout(self, value):
+            self.timeout = value
+
+        def gettimeout(self):
+            return self.timeout
+
+        def getpeercert(self, *, binary_form=False):
+            return certificate_der if binary_form else {}
+
+        def close(self):
+            pass
+
+    class FakeContext:
+        check_hostname = True
+        verify_mode = None
+
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            assert server_hostname == "rockford.local"
+            return raw_socket
+
+    monkeypatch.setattr("fluid_reality.transport.socket.create_connection", lambda *_args, **_kwargs: FakeSocket())
+    monkeypatch.setattr("fluid_reality.transport.ssl.SSLContext", lambda _protocol: FakeContext())
+    fingerprint = hashlib.sha256(certificate_der).hexdigest()
+
+    transport = SerialTransport(
+        "tls://rockford.local:8765",
+        tls_fingerprint=fingerprint,
+        timeout=0.5,
+    )
+    transport.close()
+
+
+def test_tls_transport_rejects_the_wrong_pinned_fingerprint(monkeypatch):
+    class FakeSocket:
+        def settimeout(self, _value):
+            pass
+
+        def getpeercert(self, *, binary_form=False):
+            return b"actual certificate" if binary_form else {}
+
+        def close(self):
+            pass
+
+    class FakeContext:
+        check_hostname = True
+        verify_mode = None
+
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            return raw_socket
+
+    monkeypatch.setattr("fluid_reality.transport.socket.create_connection", lambda *_args, **_kwargs: FakeSocket())
+    monkeypatch.setattr("fluid_reality.transport.ssl.SSLContext", lambda _protocol: FakeContext())
+
+    with pytest.raises(TransportError, match="fingerprint does not match"):
+        SerialTransport(
+            "tls://rockford.local:8765",
+            tls_fingerprint="00" * 32,
+            timeout=0.5,
+        )

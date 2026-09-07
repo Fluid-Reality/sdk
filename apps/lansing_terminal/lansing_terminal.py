@@ -37,7 +37,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        help="Board endpoint to connect on startup, for example COM4, /dev/ttyACM0, or tcp://127.0.0.1:8765.",
+        help=(
+            "Board endpoint to connect on startup, for example COM4, "
+            "/dev/ttyACM0, tcp://127.0.0.1:8765, tls://board.local:8765, "
+            "or ble://DEVICE-ID."
+        ),
     )
     parser.add_argument(
         "--verbose",

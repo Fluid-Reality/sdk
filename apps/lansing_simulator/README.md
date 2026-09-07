@@ -117,7 +117,7 @@ rate down to the minimum. Offline and discharge time recover current at the
 offline rate up to the maximum starting current. Text `ACT`, binary stream,
 manual `OUT`, `DIA`, and `INI` activation paths are represented.
 
-The simulator requires `fluid-reality>=0.1.5` for virtual-port aliases and the
+The simulator requires `fluid-reality>=0.2.0` for virtual-port aliases and the
 raw TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
 access is required.
 

@@ -2,6 +2,17 @@
 
 Customer development reference for the `fluid-reality` Python package.
 
+## Bluetooth transport
+
+`BluetoothTransport` implements the same synchronous line-transport contract
+as USB serial and TCP/TLS. Use `discover_bluetooth_boards()` from synchronous
+code or `discover_bluetooth_boards_async()` from asyncio code. Install the
+SDK's `bluetooth` extra to provide Bleak.
+
+`BluetoothBoard` is a composable capability for persistent `BLT` settings.
+`Rockford` combines it with `WifiBoard` through cooperative multiple
+inheritance.
+
 The PyPI package is named `fluid-reality`. The Python import package is named
 `fluid_reality`.
 
@@ -90,6 +101,32 @@ export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:8765"
 Multiple mappings are separated by semicolons. Only the selected mapped alias
 uses TCP; every unmapped serial port remains physical.
 
+For an encrypted Rockford connection, use a `tls://` endpoint. Verify the server
+with either its CA/certificate file or the SHA-256 fingerprint shown by the
+network configuration app:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford(
+    "tls://10.0.6.143:8765",
+    network_token="board-access-token",
+    tls_ca_file="rockford-certificate.pem",
+    tls_server_hostname="rockford-a172e0",
+)
+
+# Certificate pinning is useful for a self-signed device certificate:
+board = Rockford(
+    "tls://10.0.6.143:8765",
+    network_token="board-access-token",
+    tls_fingerprint="64_HEX_DIGIT_SHA256_FINGERPRINT",
+)
+```
+
+TLS is verified by default. A TLS connection without a fingerprint uses the
+operating system trust store, plus `tls_ca_file` when supplied. Plain `tcp://`
+endpoints remain supported for boards whose TLS setting is off.
+
 ## Minimal Touch Validation
 
 This is the smallest recommended end-to-end flow for a connected actuator:
@@ -140,14 +177,74 @@ from fluid_reality import (
     LansingConfig,
     LansingVersion,
     ManualOutput,
+    ConfigurableNetworkBoard,
+    NetworkBoard,
     ProtocolError,
+    Rockford,
     TcpDeviceConnection,
     TcpDeviceListener,
     TransportError,
+    EthernetBoard,
+    WifiBoard,
     is_virtual_port,
     list_ports,
 )
 ```
+
+## Composable Network Capabilities
+
+`NetworkBoard` represents a board reachable through TCP/TLS. It deliberately
+does not require or expose device-side network configuration, so it can model a
+board piggybacking a host that owns the network connection. The app supplies
+the TCP/TLS host, port, token, and certificate directly to the SDK transport.
+
+`ConfigurableNetworkBoard` adds interface-neutral hostname, IPv4, TCP server,
+access-token, diagnostics, and TLS provisioning operations. `WifiBoard` adds
+scanning, association, saved credentials, and radio control. `EthernetBoard`
+adds wired-link status and enable/disable control. A dual-interface profile can
+inherit from both:
+
+```python
+from fluid_reality import EthernetBoard, WifiBoard
+
+class DualInterfaceBoard(WifiBoard, EthernetBoard):
+    pass
+```
+
+For a connection-only device:
+
+```python
+from fluid_reality import NetworkBoard
+
+class PiggybackedBoard(NetworkBoard):
+    pass
+
+assert not PiggybackedBoard.supports_network_configuration()
+```
+
+The Device Bridge provides `DeviceBridgeBoard`, a concrete
+`ConfigurableNetworkBoard`, and `DeviceBridge.open_board()`. The bridge reports
+the interface `HOST` with the features `TCP|TLS|AUTH`. It intercepts every `NET`
+command, applies bridge-owned TCP/TLS/authentication commands locally, and
+returns local errors for unsupported or externally managed operations. No
+`NET` command reaches the serial firmware.
+
+Bridge network settings are stored in JSON. Before each overwrite, the old file
+is renamed with a local timestamp, and the replacement is written atomically.
+Listener-changing commands respond before disconnecting and restarting on the
+new TCP or TLS endpoint.
+
+`network_interfaces()` discovers firmware interfaces through `NET IF LIST` and
+returns values such as `("WIFI", "ETH")`. Older single-interface firmware falls
+back to the capabilities declared by the Python board class. Pass `interface=`
+to `network_status()`, `use_dhcp()`, `set_static_ipv4()`, or
+`network_diagnostics()` for interface-scoped commands. `configure_tcp(bind=)`
+accepts `"ANY"`, `"WIFI"`, `"ETH"`, or `"HOST"` as appropriate for the board.
+
+The interface-aware firmware command forms are `NET IF LIST`,
+`NET IF <interface> STATUS`, `NET IF <interface> IP ...`, and
+`NET TCP BIND <interface|ANY>`. Interface lists use `|` inside the `IFACES`
+field (for example, `IFACES>WIFI|ETH`) because commas delimit response fields.
 
 ## Lansing Class Constants
 
@@ -1206,6 +1303,11 @@ Methods:
 
 `accept()` raises `TimeoutError` when its optional timeout expires.
 
+Pass `tls_certfile` and `tls_keyfile` together to expose a `tls://` endpoint.
+`tls_key_password` supports encrypted PEM private keys, and
+`tls_handshake_timeout` limits stalled TLS negotiations. Without certificate
+arguments, the listener remains a raw `tcp://` endpoint.
+
 ### `TcpDeviceConnection`
 
 Represents one accepted raw byte stream.
@@ -1231,8 +1333,9 @@ with TcpDeviceListener("127.0.0.1", 8765) as listener:
 The protocol engine must handle partial reads, multiple commands in one read,
 text terminators, and binary packet boundaries. This is what allows the same
 listener to carry Lansing ASCII commands and two-byte binary stream packets.
-Bind to loopback unless the unauthenticated, unencrypted raw protocol is
-intentionally being exposed to a trusted network.
+Bind an unauthenticated, unencrypted listener only to loopback or a trusted
+isolated network. The Device Bridge can add token authentication and TLS when a
+listener must be exposed remotely.
 
 ## Response Objects
 
