@@ -904,7 +904,7 @@ class BoardWorker(QThread):
 
     def _write_board_config(self, config: dict[str, Any]) -> None:
         board = self._require_board()
-        if self._capabilities.get("VT") == "1":
+        if "vt_limit_vs" in config or self._capabilities.get("VT") == "1":
             vt_limit = getattr(board, "vt_limit_vs", None)
             if vt_limit is None:
                 raise RuntimeError("The connected board does not expose VT configuration.")
@@ -3101,7 +3101,7 @@ class BoardSettingsDialog(QDialog):
         self.setModal(False)
         self.setFixedWidth(440)
         self._detection_supported = detection_supported
-        self._vt_supported = vt_supported
+        self._vt_supported = vt_supported or "vt_limit_vs" in (config or {})
         self._loaded_vt_limit_vs: int | None = None
         self._vt_limit_modified = False
 
@@ -3111,15 +3111,15 @@ class BoardSettingsDialog(QDialog):
 
         heading = QLabel("Board Settings")
         heading.setObjectName("DialogTitle")
-        detail = QLabel(
+        self.detail = QLabel(
             "Configure the actuator VT budget, manual-output safety, and firmware logging."
-            if vt_supported
+            if self._vt_supported
             else "Configure actuator timing, manual-output safety, and firmware logging."
         )
-        detail.setObjectName("DialogSubtitle")
-        detail.setWordWrap(True)
+        self.detail.setObjectName("DialogSubtitle")
+        self.detail.setWordWrap(True)
         layout.addWidget(heading)
-        layout.addWidget(detail)
+        layout.addWidget(self.detail)
 
         form = QFormLayout()
         form.setHorizontalSpacing(16)
@@ -3143,9 +3143,8 @@ class BoardSettingsDialog(QDialog):
         self.discharge.setSuffix(" ms")
         self.discharge.setAccessibleName("Maximum discharge time")
         form.addRow(form_label("Maximum discharge time"), self.discharge)
-        form.setRowVisible(self.vt_limit, vt_supported)
-        form.setRowVisible(self.max_active, not vt_supported)
-        form.setRowVisible(self.discharge, not vt_supported)
+        self._form = form
+        self._set_vt_supported(self._vt_supported)
 
         self.safety = LabeledToggle("Safety")
         self.safety.setToolTip("When enabled, the firmware blocks raw manual output commands.")
@@ -3206,6 +3205,7 @@ class BoardSettingsDialog(QDialog):
 
     def set_config(self, config: dict[str, Any]) -> None:
         if "vt_limit_vs" in config:
+            self._set_vt_supported(True)
             self.vt_limit.setValue(int(config["vt_limit_vs"]))
             self._loaded_vt_limit_vs = int(config["vt_limit_vs"])
             self._vt_limit_modified = bool(config.get("vt_limit_modified", False))
@@ -3223,6 +3223,17 @@ class BoardSettingsDialog(QDialog):
             self.dt0_error.setValue(float(config["dt0_error_threshold_ma"]))
         if "dt1_error_threshold_ma" in config:
             self.dt1_error.setValue(float(config["dt1_error_threshold_ma"]))
+
+    def _set_vt_supported(self, supported: bool) -> None:
+        self._vt_supported = supported
+        self._form.setRowVisible(self.vt_limit, supported)
+        self._form.setRowVisible(self.max_active, not supported)
+        self._form.setRowVisible(self.discharge, not supported)
+        self.detail.setText(
+            "Configure the actuator VT budget, manual-output safety, and firmware logging."
+            if supported
+            else "Configure actuator timing, manual-output safety, and firmware logging."
+        )
 
     def values(self) -> dict[str, Any]:
         values = {
@@ -5954,7 +5965,9 @@ class DashboardWindow(QMainWindow):
         detection_supported = (
             "DET" in self._capabilities and self._capabilities["DET"] != "0"
         )
-        vt_supported = self._capabilities.get("VT") == "1"
+        vt_supported = (
+            self._capabilities.get("VT") == "1" or "vt_limit_vs" in initial
+        )
         dialog = BoardSettingsDialog(
             initial, detection_supported, self, vt_supported=vt_supported
         )

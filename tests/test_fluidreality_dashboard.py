@@ -519,6 +519,29 @@ def test_board_settings_dialog_uses_vt_budget_for_rockford(
         dialog.close()
 
 
+def test_board_settings_dialog_infers_vt_support_from_loaded_config(
+    qt_app: QApplication,
+) -> None:
+    dialog = BoardSettingsDialog({}, vt_supported=False)
+    try:
+        dialog.set_config(
+            {
+                "vt_limit_vs": 10_000,
+                "vt_limit_modified": False,
+                "safe": True,
+                "debug": False,
+            }
+        )
+        dialog.set_loading(False)
+
+        assert dialog.values()["vt_limit_vs"] == 10_000
+        assert not dialog.vt_limit.isHidden()
+        assert dialog.max_active.isHidden()
+        assert dialog.discharge.isHidden()
+    finally:
+        dialog.close()
+
+
 def test_board_settings_detection_fields_require_det_capability(
     qt_app: QApplication,
 ) -> None:
@@ -1543,6 +1566,43 @@ def test_worker_writes_and_reads_rockford_vt_settings() -> None:
             "debug": False,
         }
     ]
+
+
+def test_worker_uses_vt_config_even_when_capability_cache_is_empty() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class ConfigBoard:
+        def vt_limit_vs(self, value=None):
+            if value is not None:
+                calls.append(("VT_LIMIT", value))
+            return 10_000
+
+        def safety(self, value=None):
+            return True
+
+        def firmware_debug(self, value=None):
+            return False
+
+        def read_config(self):
+            return SimpleNamespace(
+                vt_limit_vs=10_000,
+                vt_limit_modified=True,
+                safe=True,
+                debug=False,
+            )
+
+        def status(self):
+            return {"config": {}}
+
+    worker = BoardWorker()
+    worker._board = ConfigBoard()
+    worker._capabilities = {}
+
+    worker._write_board_config(
+        {"vt_limit_vs": 10_000, "safe": True, "debug": False}
+    )
+
+    assert calls == [("VT_LIMIT", 10_000)]
 
 
 def test_worker_includes_detection_thresholds_for_det_capability() -> None:
