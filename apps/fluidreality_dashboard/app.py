@@ -79,6 +79,8 @@ from fluid_reality import (
     Board,
     Diagnosis,
     FirmwareError,
+    Lansing,
+    Rockford,
     WifiNetwork,
     discover_bluetooth_boards,
     is_virtual_port,
@@ -733,6 +735,7 @@ class BoardWorker(QThread):
         if recover_text_mode and not port.lower().startswith(("tcp://", "tls://")):
             self._board.force_text_mode()
         version = self._board.firmware_version()
+        self._adopt_detected_profile(version.firmware)
         try:
             capabilities = self._board.capabilities()
         except Exception:
@@ -751,6 +754,21 @@ class BoardWorker(QThread):
         self.busy_changed.emit("")
         self.status_ready.emit(status)
         self._last_status = time.monotonic()
+
+    def _adopt_detected_profile(self, firmware_name: str) -> None:
+        """Use the concrete SDK profile after probing a universal connection."""
+
+        if self._board_class is not FluidRealityBoard or self._board is None:
+            return
+        profile_class: type[Board] | None = {
+            "lansing": Lansing,
+            "rockford": Rockford,
+        }.get(firmware_name.strip().casefold())
+        if profile_class is None or isinstance(self._board, profile_class):
+            return
+        transport = self._board.transport
+        self._board = profile_class(transport=transport)
+        self._board.set_debug_out(self._emit_debug)
 
     def request_firmware_update_abort(self) -> None:
         self._firmware_update_abort.set()
@@ -884,6 +902,14 @@ class BoardWorker(QThread):
                 vt_limit_vs=int(config.vt_limit_vs),
                 vt_limit_modified=bool(config.vt_limit_modified),
             )
+            for name in (
+                "detection_current_limit_ma",
+                "dt0_error_threshold_ma",
+                "dt1_error_threshold_ma",
+            ):
+                value = getattr(config, name, None)
+                if value is not None:
+                    values[name] = float(value)
         else:
             values.update(
                 max_active_ms=int(config.max_active_ms),
@@ -894,7 +920,11 @@ class BoardWorker(QThread):
     def _read_board_config(self) -> None:
         board = self._require_board()
         config = self._config_values(board.read_config())
-        if "DET" in self._capabilities and self._capabilities["DET"] != "0":
+        if (
+            "DET" in self._capabilities
+            and self._capabilities["DET"] != "0"
+            and "detection_current_limit_ma" not in config
+        ):
             config.update(
                 detection_current_limit_ma=board.detection_current_limit_ma(),
                 dt0_error_threshold_ma=board.dt0_error_threshold_ma(),
@@ -904,16 +934,22 @@ class BoardWorker(QThread):
 
     def _write_board_config(self, config: dict[str, Any]) -> None:
         board = self._require_board()
+        current = self._config_values(board.read_config())
         if "vt_limit_vs" in config or self._capabilities.get("VT") == "1":
             vt_limit = getattr(board, "vt_limit_vs", None)
             if vt_limit is None:
                 raise RuntimeError("The connected board does not expose VT configuration.")
-            vt_limit(int(config["vt_limit_vs"]))
+            if int(config["vt_limit_vs"]) != int(current["vt_limit_vs"]):
+                vt_limit(int(config["vt_limit_vs"]))
         else:
-            board.max_active_time_ms(int(config["max_active_ms"]))
-            board.discharge_time_ms(int(config["discharge_ms"]))
-        board.safety(bool(config["safe"]))
-        board.firmware_debug(bool(config["debug"]))
+            if int(config["max_active_ms"]) != int(current["max_active_ms"]):
+                board.max_active_time_ms(int(config["max_active_ms"]))
+            if int(config["discharge_ms"]) != int(current["discharge_ms"]):
+                board.discharge_time_ms(int(config["discharge_ms"]))
+        if bool(config["safe"]) != bool(current["safe"]):
+            board.safety(bool(config["safe"]))
+        if bool(config["debug"]) != bool(current["debug"]):
+            board.firmware_debug(bool(config["debug"]))
         detection_supported = (
             "DET" in self._capabilities and self._capabilities["DET"] != "0"
         )
@@ -921,13 +957,19 @@ class BoardWorker(QThread):
             target_detection = float(config["detection_current_limit_ma"])
             target_dt0 = float(config["dt0_error_threshold_ma"])
             target_dt1 = float(config["dt1_error_threshold_ma"])
-            current_detection = board.detection_current_limit_ma()
+            if "detection_current_limit_ma" in current:
+                current_detection = float(current["detection_current_limit_ma"])
+            else:
+                current_detection = board.detection_current_limit_ma()
             if target_detection < current_detection:
                 board.detection_current_limit_ma(target_detection)
-            board.dt0_error_threshold_ma(target_dt0)
-            board.dt1_error_threshold_ma(target_dt1)
+            if target_dt0 != float(current.get("dt0_error_threshold_ma", target_dt0)):
+                board.dt0_error_threshold_ma(target_dt0)
+            if target_dt1 != float(current.get("dt1_error_threshold_ma", target_dt1)):
+                board.dt1_error_threshold_ma(target_dt1)
             if target_detection >= current_detection:
-                board.detection_current_limit_ma(target_detection)
+                if target_detection != current_detection:
+                    board.detection_current_limit_ma(target_detection)
         saved = self._config_values(board.read_config())
         if detection_supported:
             saved.update(

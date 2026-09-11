@@ -15,6 +15,9 @@ class RockfordConfig:
     vt_limit_modified: bool
     safe: bool
     debug: bool
+    detection_current_limit_ma: float | None = None
+    dt0_error_threshold_ma: float | None = None
+    dt1_error_threshold_ma: float | None = None
 
 
 class Rockford(WifiBoard, BluetoothBoard):
@@ -46,6 +49,15 @@ class Rockford(WifiBoard, BluetoothBoard):
             vt_limit_modified=fields.get("VT_MODIFIED", "NO").upper() == "YES",
             safe=fields["SAFE"].upper() in {"ON", "1", "TRUE", "YES"},
             debug=fields["DEBUG"].upper() in {"ON", "1", "TRUE", "YES"},
+            detection_current_limit_ma=(
+                float(fields["DET_MIN"]) if "DET_MIN" in fields else None
+            ),
+            dt0_error_threshold_ma=(
+                float(fields["DT0_ERR"]) if "DT0_ERR" in fields else None
+            ),
+            dt1_error_threshold_ma=(
+                float(fields["DT1_ERR"]) if "DT1_ERR" in fields else None
+            ),
         )
 
     def factory_reset(self) -> None:

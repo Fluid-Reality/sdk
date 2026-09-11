@@ -80,7 +80,8 @@ def test_rockford_vt_budget_configuration_and_sticky_marker():
         [
             "OK:VT_LIMIT_VS>10000",
             "OK:CFG_VT_LIMIT,VT_LIMIT_VS>12000,VT_MODIFIED>YES",
-            "OK:CFG,VT_LIMIT_VS>12000,VT_MODIFIED>YES,SAFE>ON,DEBUG>OFF",
+            "OK:CFG,VT_LIMIT_VS>12000,VT_MODIFIED>YES,SAFE>ON,DEBUG>OFF,"
+            "DET_MIN>0.10,DT0_ERR>10.00,DT1_ERR>3.00",
         ]
     )
     board = Rockford(transport=transport)
@@ -92,6 +93,9 @@ def test_rockford_vt_budget_configuration_and_sticky_marker():
         vt_limit_modified=True,
         safe=True,
         debug=False,
+        detection_current_limit_ma=0.10,
+        dt0_error_threshold_ma=10.0,
+        dt1_error_threshold_ma=3.0,
     )
     assert transport.writes == ["CFG VT_LIMIT", "CFG VT_LIMIT 12000", "CFG"]
 

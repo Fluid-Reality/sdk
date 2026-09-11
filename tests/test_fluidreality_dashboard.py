@@ -179,6 +179,23 @@ def test_worker_accepts_any_board_subclass() -> None:
     assert BoardWorker(Rockford)._board_class is Rockford
 
 
+@pytest.mark.parametrize(
+    ("firmware_name", "profile_class"),
+    [("Rockford", Rockford), ("Lansing", Lansing)],
+)
+def test_universal_worker_adopts_detected_board_profile(
+    firmware_name: str, profile_class: type[Board]
+) -> None:
+    transport = FakeTransport([])
+    worker = BoardWorker()
+    worker._board = FluidRealityBoard(transport=transport)
+
+    worker._adopt_detected_profile(firmware_name)
+
+    assert isinstance(worker._board, profile_class)
+    assert worker._board.transport is transport
+
+
 def test_factory_reset_reconnects_to_the_same_serial_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1456,32 +1473,41 @@ def test_worker_writes_and_reads_board_settings() -> None:
     calls: list[tuple[str, object]] = []
 
     class ConfigBoard:
+        max_active_ms = 5000
+        discharge_ms = 2000
+        safe = True
+        debug = False
+
         def max_active_time_ms(self, value=None):
             if value is not None:
                 calls.append(("MAX", value))
-            return 6000
+                self.max_active_ms = value
+            return self.max_active_ms
 
         def discharge_time_ms(self, value=None):
             if value is not None:
                 calls.append(("DIS", value))
-            return 1500
+                self.discharge_ms = value
+            return self.discharge_ms
 
         def safety(self, value=None):
             if value is not None:
                 calls.append(("SAFE", value))
-            return False
+                self.safe = value
+            return self.safe
 
         def firmware_debug(self, value=None):
             if value is not None:
                 calls.append(("DEBUG", value))
-            return True
+                self.debug = value
+            return self.debug
 
         def read_config(self):
             return SimpleNamespace(
-                max_active_ms=6000,
-                discharge_ms=1500,
-                safe=False,
-                debug=True,
+                max_active_ms=self.max_active_ms,
+                discharge_ms=self.discharge_ms,
+                safe=self.safe,
+                debug=self.debug,
             )
 
         def status(self):
@@ -1521,27 +1547,36 @@ def test_worker_writes_and_reads_rockford_vt_settings() -> None:
     calls: list[tuple[str, object]] = []
 
     class ConfigBoard:
+        vt_limit = 10_000
+        modified = False
+        safe = False
+        debug = True
+
         def vt_limit_vs(self, value=None):
             if value is not None:
                 calls.append(("VT_LIMIT", value))
-            return 12_000
+                self.vt_limit = value
+                self.modified = True
+            return self.vt_limit
 
         def safety(self, value=None):
             if value is not None:
                 calls.append(("SAFE", value))
-            return True
+                self.safe = value
+            return self.safe
 
         def firmware_debug(self, value=None):
             if value is not None:
                 calls.append(("DEBUG", value))
-            return False
+                self.debug = value
+            return self.debug
 
         def read_config(self):
             return SimpleNamespace(
-                vt_limit_vs=12_000,
-                vt_limit_modified=True,
-                safe=True,
-                debug=False,
+                vt_limit_vs=self.vt_limit,
+                vt_limit_modified=self.modified,
+                safe=self.safe,
+                debug=self.debug,
             )
 
         def status(self):
@@ -1575,7 +1610,7 @@ def test_worker_uses_vt_config_even_when_capability_cache_is_empty() -> None:
         def vt_limit_vs(self, value=None):
             if value is not None:
                 calls.append(("VT_LIMIT", value))
-            return 10_000
+            return 10_000 if value is None else value
 
         def safety(self, value=None):
             return True
@@ -1599,10 +1634,10 @@ def test_worker_uses_vt_config_even_when_capability_cache_is_empty() -> None:
     worker._capabilities = {}
 
     worker._write_board_config(
-        {"vt_limit_vs": 10_000, "safe": True, "debug": False}
+        {"vt_limit_vs": 12_000, "safe": True, "debug": False}
     )
 
-    assert calls == [("VT_LIMIT", 10_000)]
+    assert calls == [("VT_LIMIT", 12_000)]
 
 
 def test_worker_includes_detection_thresholds_for_det_capability() -> None:
