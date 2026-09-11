@@ -181,6 +181,19 @@ was omitted or access-token use was not enabled in the connection settings.
 Fluid Mesh is enabled only when firmware reports the `MESH` capability.
 Rockford currently reports no Fluid Mesh support.
 
+### Board Terminal
+
+Board Terminal uses the dashboard's active connection to send firmware text
+commands and shows the raw `OK:` or `ER:` responses. Enter a command and press
+Enter or click Send. The next command remains disabled until the response is
+complete. Clear removes displayed terminal history without affecting the
+board.
+
+Automatic status polling is paused from the moment the terminal opens until it
+closes. The dashboard therefore sends no background status commands to refresh
+voltage or current while the terminal is in use. Polling resumes automatically
+after the window closes.
+
 ### Update Firmware
 
 Update Firmware requires `FWU>0` and supports USB, TCP, or TLS, not Bluetooth.

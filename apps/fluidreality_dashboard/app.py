@@ -530,6 +530,8 @@ class BoardWorker(QThread):
     firmware_update_failed = Signal(str)
     factory_reset_finished = Signal()
     factory_reset_failed = Signal(str)
+    terminal_output = Signal(str, str)
+    terminal_command_finished = Signal()
     busy_changed = Signal(str)
     message = Signal(str, str)
 
@@ -553,6 +555,7 @@ class BoardWorker(QThread):
         self._connection_options: dict[str, Any] = {}
         self._firmware_update_abort = threading.Event()
         self._actuator_tool_abort = threading.Event()
+        self._terminal_active = False
 
     def enqueue(self, command: str, *args: Any) -> None:
         self._commands.put((command, args))
@@ -656,6 +659,13 @@ class BoardWorker(QThread):
                     self._update_firmware(str(args[0]))
                 elif command == "factory_reset":
                     self._factory_reset()
+                elif command == "terminal_open":
+                    self._terminal_active = True
+                elif command == "terminal_command":
+                    self._execute_terminal_command(str(args[0]))
+                elif command == "terminal_close":
+                    self._terminal_active = False
+                    self._last_status = 0.0
                 else:
                     self.message.emit(f"Unknown worker command: {command}", "error")
             except Exception as exc:
@@ -856,6 +866,8 @@ class BoardWorker(QThread):
 
     def _emit_debug(self, line: str) -> None:
         self.message.emit(line, "debug")
+        if self._terminal_active:
+            self.terminal_output.emit(line, "debug")
 
     def _disconnect(self) -> None:
         self._stop_square_wave()
@@ -877,6 +889,7 @@ class BoardWorker(QThread):
         except Exception:
             pass
         self._board = None
+        self._terminal_active = False
         self._square_actuators = []
         self.square_changed.emit(False, [], "idle")
 
@@ -890,6 +903,34 @@ class BoardWorker(QThread):
         status = board.status()
         self.status_ready.emit(status)
         self._last_status = time.monotonic()
+
+    def _execute_terminal_command(self, command_line: str) -> None:
+        """Send one text command and return its unmodified firmware response."""
+
+        try:
+            board = self._require_board()
+            parts = command_line.strip().split()
+            if not parts:
+                raise ValueError("Enter a firmware command.")
+            command, params = parts[0], parts[1:]
+            if command.upper() == "STS":
+                board.transport.write_line(" ".join([command.upper(), *params]))
+                for _ in range(64):
+                    response = board.protocol.read_result(ok_lines=1)[0]
+                    self.terminal_output.emit(response.raw, "response")
+                    if "DISCHARGE_MS_LEFT" in response.fields:
+                        break
+                else:
+                    raise RuntimeError("STS response did not terminate correctly.")
+            else:
+                for response in board.raw_command(command, *params):
+                    self.terminal_output.emit(response.raw, "response")
+        except FirmwareError as exc:
+            self.terminal_output.emit(exc.raw, "error")
+        except Exception as exc:
+            self.terminal_output.emit(f"ERROR: {exc}", "error")
+        finally:
+            self.terminal_command_finished.emit()
 
     @staticmethod
     def _config_values(config: Any) -> dict[str, Any]:
@@ -1520,7 +1561,7 @@ class BoardWorker(QThread):
         raise TimeoutError(f"Could not connect to {ssid}. Check the password and signal strength.")
 
     def _poll_status_if_due(self) -> None:
-        if self._board is None:
+        if self._board is None or self._terminal_active:
             return
         if time.monotonic() - self._last_status < 0.8:
             return
@@ -3122,6 +3163,90 @@ class ToolDialog(QDialog):
         """Place a tool action immediately before Close in the footer."""
 
         self.footer.insertWidget(self.footer.count() - 1, button)
+
+
+class BoardTerminalDialog(QDialog):
+    """Interactive text-command console for the connected firmware."""
+
+    command_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ToolDialog")
+        self.setWindowTitle("Board Terminal")
+        self.setModal(False)
+        self.resize(680, 480)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(12)
+
+        heading = QLabel("Board Terminal")
+        heading.setObjectName("DialogTitle")
+        detail = QLabel(
+            "Send text commands directly to the connected firmware. Live voltage "
+            "and current updates are paused while this window is open."
+        )
+        detail.setObjectName("DialogSubtitle")
+        detail.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(detail)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setAccessibleName("Firmware responses")
+        self.output.setMinimumHeight(300)
+        layout.addWidget(self.output, 1)
+
+        command_row = QHBoxLayout()
+        command_row.setSpacing(8)
+        self.command_input = QLineEdit()
+        self.command_input.setPlaceholderText("Enter firmware command")
+        self.command_input.setAccessibleName("Firmware command")
+        self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("PrimaryButton")
+        self.command_input.returnPressed.connect(self._send)
+        self.send_button.clicked.connect(self._send)
+        command_row.addWidget(self.command_input, 1)
+        command_row.addWidget(self.send_button)
+        layout.addLayout(command_row)
+
+        footer = QHBoxLayout()
+        footer.addStretch()
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setObjectName("SecondaryButton")
+        self.clear_button.clicked.connect(self.output.clear)
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        footer.addWidget(self.clear_button)
+        footer.addWidget(self.close_button)
+        layout.addLayout(footer)
+
+    def _send(self) -> None:
+        command = self.command_input.text().strip()
+        if not command or not self.send_button.isEnabled():
+            return
+        self.output.append(
+            f'<span style="color:#82c7ff">&gt; {html.escape(command)}</span>'
+        )
+        self.command_input.clear()
+        self.set_command_pending(True)
+        self.command_requested.emit(command)
+
+    def append_output(self, line: str, kind: str = "response") -> None:
+        color = {
+            "error": "#ff6b6b",
+            "debug": "#aab4c0",
+        }.get(kind, "#8fe3b5")
+        self.output.append(
+            f'<span style="color:{color}">&lt; {html.escape(line)}</span>'
+        )
+
+    def set_command_pending(self, pending: bool) -> None:
+        self.command_input.setEnabled(not pending)
+        self.send_button.setEnabled(not pending)
+        if not pending:
+            self.command_input.setFocus()
 
 
 class BoardSettingsDialog(QDialog):
@@ -4973,6 +5098,7 @@ class DashboardWindow(QMainWindow):
         self._network_config_dialog: NetworkConfigDialog | None = None
         self._security_config_dialog: SecurityEncryptionDialog | None = None
         self._firmware_update_dialog: FirmwareUpdateDialog | None = None
+        self._board_terminal_dialog: BoardTerminalDialog | None = None
 
         self.worker = BoardWorker(board_class)
         self.worker.connected_changed.connect(self._on_connected_changed)
@@ -5014,6 +5140,10 @@ class DashboardWindow(QMainWindow):
         self.worker.firmware_update_failed.connect(self._on_firmware_update_failed)
         self.worker.factory_reset_finished.connect(self._on_factory_reset_finished)
         self.worker.factory_reset_failed.connect(self._on_factory_reset_failed)
+        self.worker.terminal_output.connect(self._on_terminal_output)
+        self.worker.terminal_command_finished.connect(
+            self._on_terminal_command_finished
+        )
         self.worker.busy_changed.connect(self._on_busy_changed)
         self.worker.message.connect(self._log)
         self.worker.start()
@@ -5934,6 +6064,7 @@ class DashboardWindow(QMainWindow):
         self.security_config_btn = QPushButton("Security && Encryption")
         self.security_config_btn.setAccessibleName("Security & Encryption")
         self.fluid_mesh_btn = QPushButton("Fluid Mesh")
+        self.board_terminal_btn = QPushButton("Board Terminal")
         self.firmware_update_btn = QPushButton("Update Firmware")
         self.factory_reset_btn = QPushButton("Factory Reset")
         for button in (
@@ -5943,6 +6074,7 @@ class DashboardWindow(QMainWindow):
             self.network_config_btn,
             self.security_config_btn,
             self.fluid_mesh_btn,
+            self.board_terminal_btn,
             self.firmware_update_btn,
             self.factory_reset_btn,
         ):
@@ -5963,6 +6095,7 @@ class DashboardWindow(QMainWindow):
         self.fluid_mesh_btn.setToolTip(
             "Connect a board that reports Fluid Mesh support."
         )
+        self.board_terminal_btn.clicked.connect(self._show_board_terminal)
         self.firmware_update_btn.clicked.connect(self._show_firmware_update)
         self.firmware_update_btn.setEnabled(False)
         self.firmware_update_btn.setToolTip(
@@ -5974,6 +6107,46 @@ class DashboardWindow(QMainWindow):
             "Connect over USB serial to restore factory settings."
         )
         return panel
+
+    def _show_board_terminal(self) -> None:
+        if not self._connected:
+            QMessageBox.information(
+                self, "Board Terminal", "Connect to a board first."
+            )
+            return
+        if self._board_terminal_dialog is not None:
+            self._board_terminal_dialog.show()
+            self._board_terminal_dialog.raise_()
+            self._board_terminal_dialog.activateWindow()
+            return
+
+        dialog = BoardTerminalDialog(self)
+        self._board_terminal_dialog = dialog
+        dialog.command_requested.connect(
+            lambda command: self.worker.enqueue("terminal_command", command)
+        )
+        dialog.finished.connect(
+            lambda _result: self._clear_board_terminal_dialog(dialog)
+        )
+        self.worker.enqueue("terminal_open")
+        dialog.show()
+        dialog.command_input.setFocus()
+
+    def _clear_board_terminal_dialog(self, dialog: BoardTerminalDialog) -> None:
+        if self._board_terminal_dialog is not dialog:
+            return
+        self._board_terminal_dialog = None
+        self.worker.enqueue("terminal_close")
+
+    def _on_terminal_output(self, line: str, kind: str) -> None:
+        dialog = self._board_terminal_dialog
+        if dialog is not None:
+            dialog.append_output(line, kind)
+
+    def _on_terminal_command_finished(self) -> None:
+        dialog = self._board_terminal_dialog
+        if dialog is not None:
+            dialog.set_command_pending(False)
 
     def _confirm_factory_reset(self) -> None:
         if not self._connected or not self._active_endpoint or "://" in self._active_endpoint:
@@ -6418,6 +6591,8 @@ class DashboardWindow(QMainWindow):
                 self._network_config_dialog.close()
             if self._security_config_dialog is not None:
                 self._security_config_dialog.close()
+            if self._board_terminal_dialog is not None:
+                self._board_terminal_dialog.close()
             self._on_capabilities_ready({})
             self._psu_on = False
             self._psc_on = False
@@ -6537,6 +6712,13 @@ class DashboardWindow(QMainWindow):
                 "Configure Fluid Mesh."
                 if mesh_supported
                 else "The connected board does not report Fluid Mesh support."
+            )
+        if hasattr(self, "board_terminal_btn"):
+            self.board_terminal_btn.setEnabled(self._connected)
+            self.board_terminal_btn.setToolTip(
+                "Send text commands directly to the connected firmware."
+                if self._connected
+                else "Connect to a board to open its terminal."
             )
 
     def _on_actuator_count_ready(self, actuator_count: int) -> None:

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from fluid_reality import BluetoothDevice, Board, FirmwareError, Lansing, Rockford, WifiNetwork
 from apps.fluidreality_dashboard.app import (
     ActuatorCard,
+    BoardTerminalDialog,
     BoardSettingsDialog,
     BoardWorker,
     BluetoothConfigDialog,
@@ -177,6 +178,42 @@ def test_dashboard_board_uses_only_shared_board_interface() -> None:
 def test_worker_accepts_any_board_subclass() -> None:
     assert BoardWorker(Lansing)._board_class is Lansing
     assert BoardWorker(Rockford)._board_class is Rockford
+
+
+def test_terminal_pauses_status_polling_and_returns_raw_response() -> None:
+    transport = FakeTransport(["OK:FW>Rockford,VERSION>1.1,PROTO>1"])
+    worker = BoardWorker()
+    worker._board = FluidRealityBoard(transport=transport)
+    output: list[tuple[str, str]] = []
+    finished: list[bool] = []
+    worker.terminal_output.connect(lambda line, kind: output.append((line, kind)))
+    worker.terminal_command_finished.connect(lambda: finished.append(True))
+
+    worker._terminal_active = True
+    worker._last_status = 0.0
+    worker._poll_status_if_due()
+    assert transport.writes == []
+
+    worker._execute_terminal_command("VER")
+
+    assert transport.writes == ["VER"]
+    assert output == [("OK:FW>Rockford,VERSION>1.1,PROTO>1", "response")]
+    assert finished == [True]
+
+
+def test_terminal_reads_complete_multiline_status_response() -> None:
+    lines = status_lines(8, include_balance=True)
+    transport = FakeTransport(lines.copy())
+    worker = BoardWorker()
+    worker._board = FluidRealityBoard(transport=transport)
+    output: list[tuple[str, str]] = []
+    worker.terminal_output.connect(lambda line, kind: output.append((line, kind)))
+
+    worker._execute_terminal_command("sts")
+
+    assert transport.writes == ["STS"]
+    assert [line for line, _kind in output] == lines
+    assert {kind for _line, kind in output} == {"response"}
 
 
 @pytest.mark.parametrize(
@@ -2689,6 +2726,7 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
             window.network_config_btn,
             window.security_config_btn,
             window.fluid_mesh_btn,
+            window.board_terminal_btn,
             window.firmware_update_btn,
             window.factory_reset_btn,
         )
@@ -2701,6 +2739,7 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
         assert window.security_config_btn.accessibleName() == "Security & Encryption"
         assert window.fluid_mesh_btn.text() == "Fluid Mesh"
         assert not window.fluid_mesh_btn.isEnabled()
+        assert window.board_terminal_btn.text() == "Board Terminal"
         assert window.firmware_update_btn.text() == "Update Firmware"
         assert not window.firmware_update_btn.isEnabled()
         assert window.factory_reset_btn.text() == "Factory Reset"
@@ -2710,6 +2749,7 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
         window._set_board_controls_enabled(True)
         window._on_capabilities_ready({"FWU": "1"})
         assert window.firmware_update_btn.isEnabled()
+        assert window.board_terminal_btn.isEnabled()
         assert not window.fluid_mesh_btn.isEnabled()
 
         window._on_capabilities_ready({"MESH": "1"})
@@ -2732,6 +2772,44 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
         assert not window.fluid_mesh_btn.isEnabled()
         assert not window.bluetooth_config_btn.isEnabled()
         assert not window.factory_reset_btn.isEnabled()
+    finally:
+        window.close()
+
+
+def test_board_terminal_window_dispatches_commands_and_controls_polling(
+    qt_app: QApplication,
+) -> None:
+    window = DashboardWindow()
+    commands: list[tuple[str, tuple[object, ...]]] = []
+    window.worker.enqueue = lambda command, *args: commands.append((command, args))
+    try:
+        window._connected = True
+        window._set_board_controls_enabled(True)
+        window._on_capabilities_ready({})
+
+        window.board_terminal_btn.click()
+        qt_app.processEvents()
+
+        dialog = window._board_terminal_dialog
+        assert isinstance(dialog, BoardTerminalDialog)
+        assert dialog.isVisible()
+        assert commands == [("terminal_open", ())]
+        assert "paused" in dialog.findChild(QLabel, "DialogSubtitle").text()
+
+        dialog.command_input.setText("CFG")
+        dialog.send_button.click()
+        assert commands[-1] == ("terminal_command", ("CFG",))
+        assert not dialog.send_button.isEnabled()
+        window._on_terminal_output("OK:SAFE>ON", "response")
+        window._on_terminal_command_finished()
+        assert "OK:SAFE&gt;ON" not in dialog.output.toPlainText()
+        assert "OK:SAFE>ON" in dialog.output.toPlainText()
+        assert dialog.send_button.isEnabled()
+
+        dialog.close()
+        qt_app.processEvents()
+        assert commands[-1] == ("terminal_close", ())
+        assert window._board_terminal_dialog is None
     finally:
         window.close()
 

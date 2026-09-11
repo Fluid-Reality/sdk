@@ -31,8 +31,8 @@ actuator count. Selecting a card chooses the actuator used by the actuator
 tools; selecting a different group runs detection when power is ready.
 
 Board Tools contains Board Settings, Bluetooth Config, Wi-Fi Config, Network
-Config, Security & Encryption, Fluid Mesh, Update Firmware, and Factory Reset.
-Each button follows the corresponding firmware capability.
+Config, Security & Encryption, Fluid Mesh, Board Terminal, Update Firmware, and
+Factory Reset. Each button follows the corresponding firmware capability.
 
 ## Detection And Actuator States
 
@@ -128,6 +128,10 @@ current delta are plotted live and can be saved to CSV.
   Private-key creation uses a Save dialog and confirms before overwriting.
 - Fluid Mesh is enabled only when firmware reports `MESH`; Rockford currently
   reports no Fluid Mesh support.
+- Board Terminal sends text commands directly through the dashboard's active
+  connection and displays the firmware's raw responses. Automatic status
+  polling—and therefore background voltage and current queries—is paused for
+  the entire time the terminal window is open, then resumes when it closes.
 - Update Firmware is enabled only with `FWU>0` over USB, TCP, or TLS. It uploads
   a `.bin`, verifies SHA-256, reboots, and reconnects without sending legacy
   text-recovery bytes during the known reboot. Bluetooth is unsupported.
