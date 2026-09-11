@@ -3270,7 +3270,6 @@ class BoardSettingsDialog(QDialog):
         self._detection_supported = detection_supported
         self._vt_supported = vt_supported or "vt_limit_vs" in (config or {})
         self._loaded_vt_limit_vs: int | None = None
-        self._vt_limit_modified = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -3375,7 +3374,6 @@ class BoardSettingsDialog(QDialog):
             self._set_vt_supported(True)
             self.vt_limit.setValue(int(config["vt_limit_vs"]))
             self._loaded_vt_limit_vs = int(config["vt_limit_vs"])
-            self._vt_limit_modified = bool(config.get("vt_limit_modified", False))
         if "max_active_ms" in config:
             self.max_active.setValue(int(config["max_active_ms"]))
         if "discharge_ms" in config:
@@ -3435,16 +3433,13 @@ class BoardSettingsDialog(QDialog):
         self.save_button.setEnabled(not loading)
         if message is not None:
             self.status_label.setText(message)
-        elif not loading:
-            if self._vt_supported:
-                modified = "User modified" if self._vt_limit_modified else "Factory default"
-                self.status_label.setText(
-                    f"VT budget is retained after reboot. Configuration history: {modified}."
-                )
-            else:
-                self.status_label.setText(
-                    "MAX and DIS are retained after reboot; SAFE and DEBUG reset to their defaults."
-                )
+            self.status_label.setVisible(bool(message))
+        elif loading:
+            self.status_label.setText("Reading settings from the board…")
+            self.status_label.show()
+        else:
+            self.status_label.clear()
+            self.status_label.hide()
 
     def show_error(self, message: str) -> None:
         self.set_loading(False, message)

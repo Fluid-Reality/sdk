@@ -568,7 +568,8 @@ def test_board_settings_dialog_uses_vt_budget_for_rockford(
             "safe": True,
             "debug": False,
         }
-        assert "Factory default" in dialog.status_label.text()
+        assert dialog.status_label.isHidden()
+        assert dialog.status_label.text() == ""
     finally:
         dialog.close()
 
