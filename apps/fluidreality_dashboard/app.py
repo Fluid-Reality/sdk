@@ -717,6 +717,8 @@ class BoardWorker(QThread):
         self,
         port: str,
         options: dict[str, Any] | None = None,
+        *,
+        recover_text_mode: bool = True,
     ) -> None:
         self._close_board()
         self.busy_changed.emit("Connecting")
@@ -728,7 +730,7 @@ class BoardWorker(QThread):
         # the serial recovery bytes here creates a deliberate BAD_COMMAND;
         # after a Wi-Fi scan that delayed response can arrive after the drain
         # window and make an otherwise healthy network connection fail.
-        if not port.lower().startswith(("tcp://", "tls://")):
+        if recover_text_mode and not port.lower().startswith(("tcp://", "tls://")):
             self._board.force_text_mode()
         version = self._board.firmware_version()
         try:
@@ -782,7 +784,11 @@ class BoardWorker(QThread):
         while time.monotonic() < deadline and not self.isInterruptionRequested():
             time.sleep(1.0)
             try:
-                self._connect(endpoint, options)
+                # A newly rebooted firmware always starts in text mode. Sending
+                # the binary-stream recovery bytes immediately after opening
+                # USB can be buffered while the board is still booting; its
+                # delayed BAD_COMMAND would then be mistaken for the VER reply.
+                self._connect(endpoint, options, recover_text_mode=False)
                 version = self._board.firmware_version() if self._board is not None else None
                 version_text = version.version if version is not None else "unknown"
                 self.firmware_update_finished.emit(result.sha256, version_text)
@@ -816,7 +822,7 @@ class BoardWorker(QThread):
         while time.monotonic() < deadline and not self.isInterruptionRequested():
             time.sleep(1.0)
             try:
-                self._connect(endpoint, options)
+                self._connect(endpoint, options, recover_text_mode=False)
                 self.factory_reset_finished.emit()
                 self.message.emit(
                     "Factory reset complete; reconnected over USB serial.", "ok"

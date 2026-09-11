@@ -1777,6 +1777,41 @@ def test_worker_passes_tcp_and_tls_options_to_board() -> None:
     assert RecordingBoard.forced_text is False
 
 
+def test_post_reboot_serial_connect_skips_binary_recovery_bytes() -> None:
+    class RecordingBoard(Board):
+        forced_text = False
+
+        def __init__(self, port: str, **kwargs: object) -> None:
+            pass
+
+        def set_debug_out(self, callback: object) -> None:
+            pass
+
+        def force_text_mode(self) -> None:
+            type(self).forced_text = True
+
+        def firmware_version(self) -> object:
+            return SimpleNamespace(firmware="Rockford", version="1.1")
+
+        def capabilities(self) -> dict[str, str]:
+            return {"FWU": "1"}
+
+        def connect_power(self) -> str:
+            return "NONE"
+
+        def status(self) -> dict[str, int]:
+            return {"actuator_count": 8}
+
+        def close(self) -> None:
+            pass
+
+    worker = BoardWorker(RecordingBoard)
+
+    worker._connect("COM18", recover_text_mode=False)
+
+    assert RecordingBoard.forced_text is False
+
+
 @pytest.fixture(scope="module")
 def qt_app() -> QApplication:
     return QApplication.instance() or QApplication([])
