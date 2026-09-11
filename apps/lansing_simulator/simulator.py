@@ -158,6 +158,8 @@ class LansingDeviceSimulator:
         self.debug = False
         self.max_active_ms = 5000
         self.discharge_ms = 2000
+        self.vt_limit_vs = 10_000
+        self.vt_limit_modified = False
         self.values = [0] * self.actuator_count
         self.manual = [(0, 0)] * self.actuator_count
         self.total_ms = [0] * self.actuator_count
@@ -352,7 +354,7 @@ class LansingDeviceSimulator:
         if params:
             return "ER:VER_PARAM_COUNT"
         if self.board_type == "rockford":
-            return "OK:FW>Rockford,VERSION>1.0,PROTO>0.9"
+            return "OK:FW>Rockford,VERSION>1.1,PROTO>1.0"
         return "OK:FW>Lansing,VERSION>0.1,PROTO>0.1"
 
     def _capabilities(self, params: list[str]) -> str:
@@ -362,7 +364,7 @@ class LansingDeviceSimulator:
             return "OK:USB>0,BLE>0,WIFI>0,AP>0,ETH>0,TCP>1,TLS>0,NET>0,NET_IF>0,BLT>0,AUTH>0,CTL>0,DET>0,OUC>0,MESH>0,FWU>0,FCR>0"
         # The TCP simulator models the text protocol. Binary OTA is explicitly
         # reported unavailable instead of pretending an image was installed.
-        return "OK:USB>0,BLE>1,WIFI>1,AP>1,ETH>0,TCP>1,TLS>0,NET>1,NET_IF>1,BLT>1,AUTH>0,CTL>0,DET>1,OUC>1,MESH>0,FWU>1,FCR>1"
+        return "OK:USB>0,BLE>1,WIFI>1,AP>1,ETH>0,TCP>1,TLS>0,NET>1,NET_IF>1,BLT>1,AUTH>0,CTL>0,DET>1,OUC>1,VT>1,MESH>0,FWU>1,FCR>1"
 
     def _switch(self, kind: str, params: list[str]) -> str:
         if len(params) > 1:
@@ -658,6 +660,26 @@ class LansingDeviceSimulator:
         return "OK:RBT"
 
     def _config(self, params: list[str]) -> str:
+        if self.board_type == "rockford":
+            if not params:
+                return (
+                    f"OK:VT_LIMIT_VS>{self.vt_limit_vs},"
+                    f"VT_MODIFIED>{'YES' if self.vt_limit_modified else 'NO'},"
+                    f"SAFE>{'ON' if self.safe else 'OFF'},"
+                    f"DEBUG>{'ON' if self.debug else 'OFF'},"
+                    "DET_MIN>0.10,DT0_ERR>10.00,DT1_ERR>3.00"
+                )
+            if params[0].upper() == "VT_LIMIT":
+                if len(params) == 1:
+                    return f"OK:VT_LIMIT_VS>{self.vt_limit_vs}"
+                if len(params) != 2:
+                    return "ER:CFG_PARAM_COUNT"
+                value = self._parse_int(params[1], 1, 4_294_967)
+                if value is None:
+                    return "ER:CFG_VALUE"
+                self.vt_limit_vs = value
+                self.vt_limit_modified = True
+                return f"OK:CFG_VT_LIMIT,VT_LIMIT_VS>{value},VT_MODIFIED>YES"
         if self.board_type == "rockford" and params and params[0].upper() == "FACTORY_RESET":
             return "ER:CFG_FACTORY_RESET_LOCAL_ONLY"
         if len(params) not in {1, 2}:
@@ -687,15 +709,26 @@ class LansingDeviceSimulator:
         states = [1 if value else 0 for value in self.values]
         active_ms = [round((time.monotonic() - start) * 1000) if start else 0 for start in self._active_since]
         out_fields = ",".join(f"A{i}P>{p},A{i}N>{n}" for i, (p, n) in enumerate(self.manual))
-        return [
-            f"OK:PSU>{'ON' if self.psu else 'OFF'},PSC>{'ON' if self.psc else 'OFF'},VLT>{self._voltage_value():.3f},CUR>{self._current_value():.3f},CFG_MAX>{self.max_active_ms},CFG_DIS>{self.discharge_ms},SAFE>{'ON' if self.safe else 'OFF'},DEBUG>{'ON' if self.debug else 'OFF'},STREAM>{'BINARY' if self._stream_mode else 'TEXT'}",
+        config_fields = (
+            f"CFG_VT_LIMIT_VS>{self.vt_limit_vs},"
+            f"CFG_VT_MODIFIED>{'YES' if self.vt_limit_modified else 'NO'}"
+            if self.board_type == "rockford"
+            else f"CFG_MAX>{self.max_active_ms},CFG_DIS>{self.discharge_ms}"
+        )
+        lines = [
+            f"OK:PSU>{'ON' if self.psu else 'OFF'},PSC>{'ON' if self.psc else 'OFF'},VLT>{self._voltage_value():.3f},CUR>{self._current_value():.3f},{config_fields},SAFE>{'ON' if self.safe else 'OFF'},DEBUG>{'ON' if self.debug else 'OFF'},STREAM>{'BINARY' if self._stream_mode else 'TEXT'}",
             "OK:ACT_VALUES>" + ",".join(map(str, self.values)),
             "OK:OUT_VALUES>" + out_fields,
             "OK:ACT_STATES>" + ",".join(map(str, states)),
             "OK:ACTIVE_MS>" + ",".join(map(str, active_ms)),
+        ]
+        if self.board_type == "rockford":
+            lines.append("OK:VT_BALANCE_VMS>" + ",".join("0" for _ in range(self.actuator_count)))
+        lines.extend((
             "OK:TOTAL_MS>" + ",".join(map(str, self.total_ms)),
             "OK:DISCHARGE_MS_LEFT>" + ",".join("0" for _ in range(self.actuator_count)),
-        ]
+        ))
+        return lines
 
     def _network(self, params: list[str]) -> str:
         if self.board_type != "rockford":

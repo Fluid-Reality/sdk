@@ -580,7 +580,7 @@ Reads the board's multi-line status response and reports:
 - PSU state;
 - PSU-connection state;
 - measured voltage and current;
-- maximum-active and discharge timing configuration;
+- Lansing maximum-active/discharge timing or Rockford VT budget and audit state;
 - manual-output safety state;
 - firmware-debug state;
 - square-wave state; and
@@ -687,8 +687,11 @@ config get <MAX|DIS|SAFE|DEBUG>
 config set <MAX|DIS|SAFE|DEBUG> <value>
 ```
 
-Reads or modifies firmware runtime configuration. `config` and `config show`
-are equivalent.
+Reads or modifies Lansing firmware runtime configuration. `config` and
+`config show` are equivalent. Rockford reports its VT budget through
+`config show`; use the guarded `vt_limit` command to change it. Raw
+`config set VT_LIMIT` is rejected by the terminal so the damage warning cannot
+be bypassed.
 
 | Key | Meaning | Typical value form |
 | --- | --- | --- |
@@ -723,6 +726,30 @@ JSON `get` and `set` results include `operation`, `key`, and `value`:
 
 ```json
 {"event":"config","operation":"get","key":"MAX","value":"5000"}
+```
+
+### `vt_limit`
+
+```text
+vt_limit
+vt_limit <V·s> I_UNDERSTAND
+```
+
+Reads or changes Rockford's persistent per-actuator voltage-time budget. The
+default is 10,000 V·s. An incorrect value can permanently damage actuators or
+board electronics, so the exact `I_UNDERSTAND` confirmation is required.
+Every accepted write permanently marks the board's VT configuration as user
+modified, even if the default value is written. Factory reset restores the
+default value but preserves this audit marker.
+
+Rockford firmware integrates signed drive internally in integer V·ms. A normal
+stop immediately applies full reverse until its 1:1 VT balance is cancelled.
+When the budget is exhausted, it ramps from full forward to full reverse at
+100 V/s and then holds full reverse until the balance is zero.
+
+```text
+vt_limit
+vt_limit 10000 I_UNDERSTAND
 ```
 
 ### `safety`

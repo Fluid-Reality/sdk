@@ -33,7 +33,18 @@ def main() -> None:
         "--max-active-ms",
         type=int,
         default=None,
-        help="Optionally set firmware CFG MAX before streaming. This config is persistent on the board.",
+        help="Lansing only: optionally set persistent firmware CFG MAX before streaming.",
+    )
+    parser.add_argument(
+        "--vt-limit-vs",
+        type=int,
+        default=None,
+        help="Rockford only: set the persistent per-actuator VT budget in V·s.",
+    )
+    parser.add_argument(
+        "--confirm-vt-risk",
+        action="store_true",
+        help="Required with --vt-limit-vs; confirms the hardware-damage warning.",
     )
     parser.add_argument(
         "--print-values",
@@ -53,9 +64,26 @@ def main() -> None:
     with open_board(args) as board:
         if not args.no_sync:
             board.force_text_mode()
-        if args.max_active_ms is not None:
-            board.max_active_time_ms(args.max_active_ms)
+        vt_config = getattr(board, "vt_limit_vs", None)
+        if vt_config is not None:
+            if args.max_active_ms is not None:
+                parser.error("--max-active-ms applies to Lansing, not Rockford")
+            if args.vt_limit_vs is not None:
+                if not args.confirm_vt_risk:
+                    parser.error(
+                        "--vt-limit-vs requires --confirm-vt-risk because an incorrect "
+                        "limit can permanently damage actuators or board electronics"
+                    )
+                vt_config(args.vt_limit_vs)
+            print(
+                f"Rockford VT budget: {vt_config():,} V·s; the firmware integrates "
+                "actual drive voltage and forces a gentle discharge at the limit."
+            )
         else:
+            if args.vt_limit_vs is not None:
+                parser.error("--vt-limit-vs applies to Rockford, not Lansing")
+            if args.max_active_ms is not None:
+                board.max_active_time_ms(args.max_active_ms)
             max_active_ms = board.max_active_time_ms()
             if args.duration_s * 1000 >= max_active_ms:
                 print(

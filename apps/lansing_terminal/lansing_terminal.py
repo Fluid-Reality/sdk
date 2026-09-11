@@ -551,6 +551,20 @@ class LansingTerminal(cmd.Cmd):
         config = status["config"]
         counts = {state: states.count(state) for state in ActuatorState}
         if self.json_output:
+            config_payload = {
+                "safe": yes_no(config["safe"]) == "on",
+                "debug": yes_no(config["debug"]) == "on",
+            }
+            if "vt_limit_vs" in config:
+                config_payload.update(
+                    vt_limit_vs=int(config["vt_limit_vs"]),
+                    vt_limit_modified=bool(config.get("vt_limit_modified", False)),
+                )
+            else:
+                config_payload.update(
+                    max_active_ms=int(config["max_active_ms"]),
+                    discharge_ms=int(config["discharge_ms"]),
+                )
             self._emit(
                 "",
                 event="status",
@@ -559,12 +573,7 @@ class LansingTerminal(cmd.Cmd):
                 psu_connection=yes_no(status["psc"]),
                 voltage_v=float(status["voltage"]),
                 current_ma=float(status["current"]),
-                config={
-                    "max_active_ms": int(config["max_active_ms"]),
-                    "discharge_ms": int(config["discharge_ms"]),
-                    "safe": yes_no(config["safe"]) == "on",
-                    "debug": yes_no(config["debug"]) == "on",
-                },
+                config=config_payload,
                 square_wave={
                     "running": self.square.running,
                     "actuators": list(self.square.actuators),
@@ -577,10 +586,16 @@ class LansingTerminal(cmd.Cmd):
         print(f"PSU connection: {yes_no(status['psc'])}")
         print(f"Voltage: {float(status['voltage']):.2f} V")
         print(f"Current: {float(status['current']):.2f} mA")
-        print(
-            "Timing: max "
-            f"{format_ms(config['max_active_ms'])}, discharge {format_ms(config['discharge_ms'])}"
-        )
+        if "vt_limit_vs" in config:
+            print(
+                f"VT budget: {int(config['vt_limit_vs']):,} V·s "
+                f"({'user modified' if config.get('vt_limit_modified') else 'factory default'})"
+            )
+        else:
+            print(
+                "Timing: max "
+                f"{format_ms(config['max_active_ms'])}, discharge {format_ms(config['discharge_ms'])}"
+            )
         print(f"Safety: {yes_no(config['safe'])}; firmware debug: {yes_no(config['debug'])}")
         print(f"Square wave: {'running' if self.square.running else 'stopped'}")
         print(
@@ -643,7 +658,7 @@ class LansingTerminal(cmd.Cmd):
         self._emit(f"{value:.2f} mA", event="current", current_ma=value)
 
     def do_config(self, arg: str) -> None:
-        """config [show|get <MAX|DIS|SAFE|DEBUG>|set <MAX|DIS|SAFE|DEBUG> <value>]
+        """config [show|get <key>|set <key> <value>]
 
         Read or modify timing, safety, and firmware debug configuration.
         """
@@ -653,17 +668,15 @@ class LansingTerminal(cmd.Cmd):
             with self._lock:
                 config = self._require_board().read_config()
             if self.json_output:
-                self._emit(
-                    "",
-                    event="config",
-                    max_active_ms=config.max_active_ms,
-                    discharge_ms=config.discharge_ms,
-                    safe=config.safe,
-                    debug=config.debug,
-                )
+                values = vars(config)
+                self._emit("", event="config", **values)
             else:
-                print(f"max_active_ms: {config.max_active_ms}")
-                print(f"discharge_ms: {config.discharge_ms}")
+                if hasattr(config, "vt_limit_vs"):
+                    print(f"vt_limit_vs: {config.vt_limit_vs}")
+                    print(f"vt_limit_modified: {config.vt_limit_modified}")
+                else:
+                    print(f"max_active_ms: {config.max_active_ms}")
+                    print(f"discharge_ms: {config.discharge_ms}")
                 print(f"safe: {yes_no(config.safe)}")
                 print(f"debug: {yes_no(config.debug)}")
             return
@@ -673,11 +686,53 @@ class LansingTerminal(cmd.Cmd):
             self._emit(str(value), event="config", operation="get", key=parts[1].upper(), value=value)
             return
         if len(parts) == 3 and parts[0] == "set":
+            if parts[1].upper() == "VT_LIMIT":
+                raise ValueError(
+                    "Use 'vt_limit <V·s> I_UNDERSTAND' so the damage warning cannot be bypassed."
+                )
             with self._lock:
                 value = self._require_board().config(parts[1], parts[2])
             self._emit(str(value), event="config", operation="set", key=parts[1].upper(), value=value)
             return
         raise ValueError("Usage: config [show|get <key>|set <key> <value>]")
+
+    def do_vt_limit(self, arg: str) -> None:
+        """vt_limit | vt_limit <V·s> I_UNDERSTAND
+
+        Read or change the Rockford VT budget. Increasing or otherwise changing
+        this limit can permanently damage actuators or board electronics. Every
+        accepted write permanently marks the board configuration as modified.
+        """
+
+        parts = shlex.split(arg)
+        board = self._require_board()
+        method = getattr(board, "vt_limit_vs", None)
+        if method is None:
+            raise RuntimeError("VT budgeting is not supported by this board profile.")
+        if not parts:
+            with self._lock:
+                config = board.read_config()
+            self._emit(
+                f"VT budget: {config.vt_limit_vs:,} V·s "
+                f"({'user modified' if config.vt_limit_modified else 'factory default'}).",
+                event="vt_limit",
+                vt_limit_vs=config.vt_limit_vs,
+                modified=config.vt_limit_modified,
+            )
+            return
+        if len(parts) != 2 or parts[1] != "I_UNDERSTAND":
+            raise ValueError(
+                "Changing the VT budget can permanently damage actuators or board electronics. "
+                "Usage: vt_limit <V·s> I_UNDERSTAND"
+            )
+        with self._lock:
+            value = method(int(parts[0]))
+        self._emit(
+            f"VT budget changed to {value:,} V·s; the permanent modification mark is set.",
+            event="vt_limit_changed",
+            vt_limit_vs=value,
+            modified=True,
+        )
 
     def do_safety(self, arg: str) -> None:
         """safety [on|off]

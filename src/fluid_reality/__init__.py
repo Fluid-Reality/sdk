@@ -8,6 +8,7 @@ from .boards import (
     Lansing,
     NetworkBoard,
     Rockford,
+    RockfordConfig,
     WifiBoard,
     WifiNetwork,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "ManualOutput",
     "NetworkBoard",
     "Rockford",
+    "RockfordConfig",
     "WifiNetwork",
     "ProtocolError",
     "TcpDeviceConnection",
@@ -78,4 +80,4 @@ __all__ = [
     "open_board_from_connection_file",
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"

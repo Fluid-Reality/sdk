@@ -950,12 +950,14 @@ class Board(TransportBoard):
             "PSC",
             "VLT",
             "CUR",
-            "CFG_MAX",
-            "CFG_DIS",
             "SAFE",
             "DEBUG",
             "STREAM",
         }
+        has_time_config = "CFG_MAX" in summary and "CFG_DIS" in summary
+        has_vt_config = "CFG_VT_LIMIT_VS" in summary
+        if not has_time_config and not has_vt_config:
+            required_summary_fields.add("CFG_VT_LIMIT_VS")
         missing_summary_fields = required_summary_fields.difference(summary)
         if missing_summary_fields:
             raw_lines = " | ".join(response.raw for response in responses)
@@ -1000,9 +1002,17 @@ class Board(TransportBoard):
             self._int_tuple(balance_response.payload.removeprefix("BALANCE_MS>"))
             if balance_response is not None else (0,) * actuator_count
         )
+        vt_balance_response = sections.get("VT_BALANCE_VMS")
+        vt_balance_vms = (
+            self._int_tuple(
+                vt_balance_response.payload.removeprefix("VT_BALANCE_VMS>")
+            )
+            if vt_balance_response is not None else (0,) * actuator_count
+        )
         arrays = {
             "ACT_STATES": actuator_states, "ACTIVE_MS": active_ms,
             "BALANCE_MS": balance_ms, "TOTAL_MS": total_ms,
+            "VT_BALANCE_VMS": vt_balance_vms,
             "DISCHARGE_MS_LEFT": discharge_ms_left,
         }
         mismatched = [name for name, values in arrays.items() if len(values) != actuator_count]
@@ -1035,6 +1045,28 @@ class Board(TransportBoard):
                 if actuator < actuator_count
             }
 
+        config: dict[str, object] = {
+            "safe": summary["SAFE"],
+            "debug": summary["DEBUG"],
+        }
+        if has_time_config:
+            config.update(
+                max_active_ms=int(summary["CFG_MAX"]),
+                discharge_ms=int(summary["CFG_DIS"]),
+            )
+        if has_vt_config:
+            config.update(
+                vt_limit_vs=int(summary["CFG_VT_LIMIT_VS"]),
+                vt_limit_modified=summary.get("CFG_VT_MODIFIED", "NO").upper()
+                == "YES",
+            )
+        if "DET_MIN" in summary:
+            config.update(
+                detection_current_limit_ma=detection_limit,
+                dt0_error_threshold_ma=self.initial_detection_error_delta_ma,
+                dt1_error_threshold_ma=self.error_delta_ma,
+            )
+
         status = {
             "actuator_count": actuator_count,
             "psu": summary["PSU"],
@@ -1045,21 +1077,7 @@ class Board(TransportBoard):
             ),
             "voltage": float(summary["VLT"]),
             "current": float(summary["CUR"]),
-            "config": {
-                "max_active_ms": int(summary["CFG_MAX"]),
-                "discharge_ms": int(summary["CFG_DIS"]),
-                "safe": summary["SAFE"],
-                "debug": summary["DEBUG"],
-                **(
-                    {
-                        "detection_current_limit_ma": detection_limit,
-                        "dt0_error_threshold_ma": self.initial_detection_error_delta_ma,
-                        "dt1_error_threshold_ma": self.error_delta_ma,
-                    }
-                    if "DET_MIN" in summary
-                    else {}
-                ),
-            },
+            "config": config,
             "stream": summary["STREAM"],
             "detection_current_limit_ma": detection_limit,
             "actuator_values": actuator_values,
@@ -1067,6 +1085,8 @@ class Board(TransportBoard):
             "actuator_states": actuator_states,
             "active_ms": active_ms,
             "balance_ms": balance_ms,
+            "vt_balance_vms": vt_balance_vms,
+            "vt_balance_vs": tuple(value / 1000.0 for value in vt_balance_vms),
             "total_ms": total_ms,
             "discharge_ms_left": discharge_ms_left,
         }

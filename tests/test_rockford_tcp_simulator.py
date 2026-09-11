@@ -38,6 +38,19 @@ def test_rockford_profile_exposes_current_protocol(tmp_path) -> None:
             assert capabilities["NET"] == "1"
             assert capabilities["BLT"] == "1"
             assert capabilities["FWU"] == "1"
+            assert capabilities["VT"] == "1"
+
+            config = board.read_config()
+            assert config.vt_limit_vs == 10_000
+            assert config.vt_limit_modified is False
+            assert board.vt_limit_vs(12_500) == 12_500
+            assert board.read_config().vt_limit_modified is True
+
+            status = board.status()
+            assert status["config"]["vt_limit_vs"] == 12_500
+            assert status["config"]["vt_limit_modified"] is True
+            assert status["vt_balance_vms"] == (0,) * 8
+            assert status["vt_balance_vs"] == (0.0,) * 8
 
             assert board.network_interfaces() == ("WIFI",)
             assert board.network_status("WIFI")["IF"] == "WIFI"

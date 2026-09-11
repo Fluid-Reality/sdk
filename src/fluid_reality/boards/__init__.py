@@ -19,7 +19,7 @@ from .network import (
     WifiBoard,
     WifiNetwork,
 )
-from .rockford import Rockford
+from .rockford import Rockford, RockfordConfig
 
 __all__ = [
     "BluetoothBoard",
@@ -36,6 +36,7 @@ __all__ = [
     "ManualOutput",
     "NetworkBoard",
     "Rockford",
+    "RockfordConfig",
     "WifiBoard",
     "WifiNetwork",
 ]

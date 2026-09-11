@@ -216,6 +216,7 @@ from fluid_reality import (
     NetworkBoard,
     ProtocolError,
     Rockford,
+    RockfordConfig,
     TcpDeviceConnection,
     TcpDeviceListener,
     TransportError,
@@ -483,6 +484,21 @@ print(config.safe)
 print(config.debug)
 ```
 
+### `RockfordConfig`
+
+Typed Rockford configuration returned by `Rockford.read_config()`.
+
+Fields:
+
+- `vt_limit_vs: int`: per-actuator voltage-time budget in V·s
+- `vt_limit_modified: bool`: permanent audit marker for any user VT-limit write
+- `safe: bool`
+- `debug: bool`
+
+The default VT budget is 10,000 V·s (200 V for 50 seconds). An incorrect limit
+can permanently damage actuators or board electronics. Factory reset restores
+the default value but deliberately preserves `vt_limit_modified`.
+
 ## Power And Telemetry
 
 ### `power_supply(state=None) -> str`
@@ -596,14 +612,18 @@ Returned keys:
 - `psc`: output-connection state string
 - `voltage`: float voltage in volts
 - `current`: float current in milliamps
-- `config`: dict with `max_active_ms`, `discharge_ms`, `safe`, `debug`
+- `config`: dict with `safe`, `debug`, and either Lansing's `max_active_ms` and
+  `discharge_ms` or Rockford's `vt_limit_vs` and `vt_limit_modified`
 - `stream`: stream mode state
-- `actuator_values`: tuple of 24 normal actuator values
+- `actuator_values`: tuple of normal actuator values (24 Lansing, 8 Rockford)
 - `manual_outputs`: dict mapping actuator to `(positive, negative)`
-- `actuator_states`: tuple of 24 firmware actuator state numbers
-- `active_ms`: tuple of 24 active-time counters
-- `total_ms`: tuple of 24 total runtime counters
-- `discharge_ms_left`: tuple of 24 remaining discharge timers
+- `actuator_states`: tuple of firmware actuator state numbers
+- `active_ms`: tuple of active-time counters
+- `balance_ms`: Lansing time-balance counters
+- `vt_balance_vms`: Rockford integer voltage-time balances in V·ms
+- `vt_balance_vs`: Rockford voltage-time balances converted to V·s
+- `total_ms`: tuple of total runtime counters
+- `discharge_ms_left`: tuple of remaining full-reverse discharge estimates
 
 Example:
 
@@ -611,7 +631,8 @@ Example:
 status = board.status()
 print(status["psu"], status["psc"])
 print(status["voltage"], status["current"])
-print(status["config"]["max_active_ms"])
+print(status["config"])
+print(status.get("vt_balance_vs"))
 print(status["discharge_ms_left"][0])
 ```
 
@@ -899,10 +920,14 @@ board.reset_runtimes()
 
 Read or write a raw configuration value.
 
-Common keys:
+Lansing timing keys:
 
 - `MAX`: maximum active time in milliseconds
 - `DIS`: maximum discharge time in milliseconds
+
+Rockford VT key:
+
+- `VT_LIMIT`: per-actuator voltage-time budget in whole V·s
 - `SAFE`: manual-output safety, `ON` or `OFF`
 - `DEBUG`: firmware debug output, `ON` or `OFF`
 - `DET_MIN`: minimum current increase that indicates an actuator is present
@@ -912,8 +937,10 @@ Common keys:
 Rockford also provides `factory_reset()`, which sends the USB-only
 `CFG FACTORY_RESET` command. It safely disables all outputs, erases persistent
 actuator and network configuration (including TLS material, access token,
-Bluetooth settings and bonds), and reboots with firmware defaults. Default
-hardware-derived names and a new access token are generated during startup.
+Bluetooth settings and bonds), and reboots with firmware defaults. The VT value
+returns to 10,000 V·s, but its permanent user-modified audit marker is
+preserved. Default hardware-derived names and a new access token are generated
+during startup.
 
 Examples:
 
@@ -926,6 +953,10 @@ print(board.config("DEBUG"))
 board.config("DEBUG", "ON")
 board.config("DEBUG", "OFF")
 ```
+
+Use the typed `Rockford.vt_limit_vs()` method for VT changes so values are
+validated. Applications should show a hardware-damage warning before calling
+the setter.
 
 ### `max_active_time_ms(value=None) -> int`
 
@@ -948,6 +979,29 @@ print(current_discharge)
 
 board.discharge_time_ms(2000)
 ```
+
+The two timing methods above are Lansing configuration. Rockford firmware 1.1
+does not impose a continuous activation-time limit.
+
+### `Rockford.vt_limit_vs(value=None) -> int`
+
+Read or set Rockford's persistent per-actuator VT budget in whole V·s. The
+accepted range is 1 through 4,294,967 V·s. Every successful set operation
+permanently marks the board as user-modified, including writing the current or
+default value.
+
+```python
+current_limit = board.vt_limit_vs()
+print(current_limit)
+
+# Show a prominent damage warning and obtain explicit user confirmation first.
+board.vt_limit_vs(10_000)
+```
+
+Firmware accumulates signed exposure internally as a 32-bit integer in V·ms.
+Normal stop uses immediate full reverse until balance reaches zero. Budget
+exhaustion ramps linearly from full forward to full reverse at 100 V/s and then
+holds full reverse until the 1:1 VT balance is cancelled.
 
 ### Detection threshold configuration
 
@@ -983,16 +1037,13 @@ finally:
     board.safety(True)
 ```
 
-### `read_config() -> LansingConfig`
+### `read_config() -> LansingConfig | RockfordConfig`
 
 Read typed configuration values.
 
 ```python
 config = board.read_config()
-print(config.max_active_ms)
-print(config.discharge_ms)
-print(config.safe)
-print(config.debug)
+print(config)
 ```
 
 ## Debug Output

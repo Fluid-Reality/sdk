@@ -93,7 +93,7 @@ print(list_ports())
 
 Every returned value can be passed directly to `Lansing(...)`.
 
-Rockford firmware 1.0 can also expose the physical board directly over Wi-Fi.
+Rockford firmware 1.1 can also expose the physical board directly over Wi-Fi.
 Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
 
 ```python
@@ -230,23 +230,30 @@ diagnoses it again. If initialization succeeds, the state changes to `Ready`.
 
 ## Discharge Behavior
 
-Actuator output and discharge are also separate phases. When an actuator is
-turned on with `board.set_actuator(actuator, value)`, it runs forward. When it
-is turned off with `board.set_actuator(actuator, 0)`, the board does not simply
-stop instantly. It automatically discharges the actuator by running it in the
-opposite direction for the same amount of time it was driven forward, up to the
-configured discharge limit.
+Actuator output and discharge are separate phases. Lansing uses its existing
+maximum-active and maximum-discharge times. Rockford firmware 1.1 instead
+integrates each actuator's signed voltage-time exposure and maintains a 1:1
+forward/reverse balance. Its default per-actuator budget is 10,000 V·s,
+equivalent to 200 V for 50 seconds.
 
-This means an actuator that was active for 250 ms will discharge for about
-250 ms after it is turned off. An actuator that was active for longer will also
-discharge longer, but the Lansing firmware limits normal forward activation to
-at most 5 seconds and limits discharge to at most 2 seconds. During discharge,
-the actuator can still feel active or busy even though you already commanded it
-off. That is expected behavior.
+When Rockford receives a normal off command, it immediately applies full
+reverse until the accumulated VT is cancelled. If an actuator exhausts its VT
+budget while still active, firmware gently ramps from full forward to full
+reverse at 100 V/s, includes the ramp in the VT calculation, then holds full
+reverse until the balance reaches zero. There is no separate continuous
+activation-time limit on Rockford. During discharge, an actuator can still feel
+active or busy even after it was commanded off; that is expected.
 
 Wait for discharge to finish before starting the next pulse or interpreting the
 actuator as idle. The SDK and firmware use this discharge phase to return the
 actuator safely toward neutral.
+
+Read Rockford's VT settings with `board.read_config()` or
+`board.vt_limit_vs()`. Setting `board.vt_limit_vs(value)` uses whole V·s and
+permanently marks the board as user-modified. An incorrect limit can permanently
+damage actuators or board electronics. Factory reset restores 10,000 V·s but
+does not erase that audit marker. See `examples/13_vt_budget.py` for the guarded
+configuration flow.
 
 ## API Reference
 
@@ -313,7 +320,8 @@ Use `python <example> --help` for each example's complete options.
 - [02_initialize_and_diagnose.py](examples/02_initialize_and_diagnose.py):
   detect an actuator, initialize it when needed, and report diagnosis results.
 - [03_stream_sine.py](examples/03_stream_sine.py):
-  stream a sine waveform to one actuator.
+  stream a sine waveform to one actuator with board-specific Lansing timing or
+  guarded Rockford VT configuration.
 - [04_debug_logging.py](examples/04_debug_logging.py):
   enable SDK and firmware debug output and save it to a log file.
 - [05_status_snapshot.py](examples/05_status_snapshot.py):
@@ -333,3 +341,6 @@ Use `python <example> --help` for each example's complete options.
   upload and verify a firmware image over USB, TCP, or TLS.
 - [12_factory_reset.py](examples/12_factory_reset.py):
   factory-reset a Rockford board over USB with explicit confirmation.
+- [13_vt_budget.py](examples/13_vt_budget.py):
+  inspect Rockford's VT budget and require explicit risk confirmation before a
+  persistent change.

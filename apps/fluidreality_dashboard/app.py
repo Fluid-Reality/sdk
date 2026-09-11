@@ -869,12 +869,21 @@ class BoardWorker(QThread):
 
     @staticmethod
     def _config_values(config: Any) -> dict[str, Any]:
-        return {
-            "max_active_ms": int(config.max_active_ms),
-            "discharge_ms": int(config.discharge_ms),
+        values = {
             "safe": bool(config.safe),
             "debug": bool(config.debug),
         }
+        if hasattr(config, "vt_limit_vs"):
+            values.update(
+                vt_limit_vs=int(config.vt_limit_vs),
+                vt_limit_modified=bool(config.vt_limit_modified),
+            )
+        else:
+            values.update(
+                max_active_ms=int(config.max_active_ms),
+                discharge_ms=int(config.discharge_ms),
+            )
+        return values
 
     def _read_board_config(self) -> None:
         board = self._require_board()
@@ -889,8 +898,14 @@ class BoardWorker(QThread):
 
     def _write_board_config(self, config: dict[str, Any]) -> None:
         board = self._require_board()
-        board.max_active_time_ms(int(config["max_active_ms"]))
-        board.discharge_time_ms(int(config["discharge_ms"]))
+        if self._capabilities.get("VT") == "1":
+            vt_limit = getattr(board, "vt_limit_vs", None)
+            if vt_limit is None:
+                raise RuntimeError("The connected board does not expose VT configuration.")
+            vt_limit(int(config["vt_limit_vs"]))
+        else:
+            board.max_active_time_ms(int(config["max_active_ms"]))
+            board.discharge_time_ms(int(config["discharge_ms"]))
         board.safety(bool(config["safe"]))
         board.firmware_debug(bool(config["debug"]))
         detection_supported = (
@@ -3071,6 +3086,8 @@ class BoardSettingsDialog(QDialog):
         config: dict[str, Any] | None = None,
         detection_supported: bool = False,
         parent: QWidget | None = None,
+        *,
+        vt_supported: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("ToolDialog")
@@ -3078,6 +3095,9 @@ class BoardSettingsDialog(QDialog):
         self.setModal(False)
         self.setFixedWidth(440)
         self._detection_supported = detection_supported
+        self._vt_supported = vt_supported
+        self._loaded_vt_limit_vs: int | None = None
+        self._vt_limit_modified = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -3085,7 +3105,11 @@ class BoardSettingsDialog(QDialog):
 
         heading = QLabel("Board Settings")
         heading.setObjectName("DialogTitle")
-        detail = QLabel("Configure actuator timing, manual-output safety, and firmware logging.")
+        detail = QLabel(
+            "Configure the actuator VT budget, manual-output safety, and firmware logging."
+            if vt_supported
+            else "Configure actuator timing, manual-output safety, and firmware logging."
+        )
         detail.setObjectName("DialogSubtitle")
         detail.setWordWrap(True)
         layout.addWidget(heading)
@@ -3095,6 +3119,12 @@ class BoardSettingsDialog(QDialog):
         form.setHorizontalSpacing(16)
         form.setVerticalSpacing(10)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        self.vt_limit = QSpinBox()
+        self.vt_limit.setRange(1, 4_294_967)
+        self.vt_limit.setSuffix(" V·s")
+        self.vt_limit.setAccessibleName("VT budget")
+        form.addRow(form_label("VT budget"), self.vt_limit)
 
         self.max_active = QSpinBox()
         self.max_active.setRange(0, 2_147_483_647)
@@ -3107,6 +3137,9 @@ class BoardSettingsDialog(QDialog):
         self.discharge.setSuffix(" ms")
         self.discharge.setAccessibleName("Maximum discharge time")
         form.addRow(form_label("Maximum discharge time"), self.discharge)
+        form.setRowVisible(self.vt_limit, vt_supported)
+        form.setRowVisible(self.max_active, not vt_supported)
+        form.setRowVisible(self.discharge, not vt_supported)
 
         self.safety = LabeledToggle("Safety")
         self.safety.setToolTip("When enabled, the firmware blocks raw manual output commands.")
@@ -3144,7 +3177,7 @@ class BoardSettingsDialog(QDialog):
             self.dt0_error,
             self.dt1_error,
         )
-        for row in range(4, 7):
+        for row in range(5, 8):
             form.setRowVisible(row, detection_supported)
         layout.addLayout(form)
 
@@ -3166,6 +3199,10 @@ class BoardSettingsDialog(QDialog):
         self.set_loading(True)
 
     def set_config(self, config: dict[str, Any]) -> None:
+        if "vt_limit_vs" in config:
+            self.vt_limit.setValue(int(config["vt_limit_vs"]))
+            self._loaded_vt_limit_vs = int(config["vt_limit_vs"])
+            self._vt_limit_modified = bool(config.get("vt_limit_modified", False))
         if "max_active_ms" in config:
             self.max_active.setValue(int(config["max_active_ms"]))
         if "discharge_ms" in config:
@@ -3183,11 +3220,16 @@ class BoardSettingsDialog(QDialog):
 
     def values(self) -> dict[str, Any]:
         values = {
-            "max_active_ms": self.max_active.value(),
-            "discharge_ms": self.discharge.value(),
             "safe": self.safety.isChecked(),
             "debug": self.debug.isChecked(),
         }
+        if self._vt_supported:
+            values["vt_limit_vs"] = self.vt_limit.value()
+        else:
+            values.update(
+                max_active_ms=self.max_active.value(),
+                discharge_ms=self.discharge.value(),
+            )
         if self._detection_supported:
             values.update(
                 detection_current_limit_ma=self.detection_current.value(),
@@ -3198,6 +3240,7 @@ class BoardSettingsDialog(QDialog):
 
     def set_loading(self, loading: bool, message: str | None = None) -> None:
         for control in (
+            self.vt_limit,
             self.max_active,
             self.discharge,
             self.safety,
@@ -3209,9 +3252,15 @@ class BoardSettingsDialog(QDialog):
         if message is not None:
             self.status_label.setText(message)
         elif not loading:
-            self.status_label.setText(
-                "MAX and DIS are retained after reboot; SAFE and DEBUG reset to their defaults."
-            )
+            if self._vt_supported:
+                modified = "User modified" if self._vt_limit_modified else "Factory default"
+                self.status_label.setText(
+                    f"VT budget is retained after reboot. Configuration history: {modified}."
+                )
+            else:
+                self.status_label.setText(
+                    "MAX and DIS are retained after reboot; SAFE and DEBUG reset to their defaults."
+                )
 
     def show_error(self, message: str) -> None:
         self.set_loading(False, message)
@@ -3226,6 +3275,28 @@ class BoardSettingsDialog(QDialog):
                 "Detection current must be lower than both DT0 and DT1 error thresholds."
             )
             return
+        if (
+            self._vt_supported
+            and self._loaded_vt_limit_vs is not None
+            and self.vt_limit.value() != self._loaded_vt_limit_vs
+        ):
+            warning = QMessageBox(self)
+            warning.setWindowTitle("Change VT budget")
+            warning.setIcon(QMessageBox.Warning)
+            warning.setText(
+                f"Change the VT budget from {self._loaded_vt_limit_vs:,} V·s "
+                f"to {self.vt_limit.value():,} V·s?"
+            )
+            warning.setInformativeText(
+                "Changing this value alters the electrical exposure allowed for each "
+                "actuator. An incorrect value could permanently damage the actuators "
+                "or board electronics. Use only a limit validated for this hardware."
+            )
+            change_button = warning.addButton("Change VT budget", QMessageBox.AcceptRole)
+            warning.addButton(QMessageBox.Cancel)
+            warning.exec()
+            if warning.clickedButton() is not change_button:
+                return
         self.status_label.setStyleSheet("")
         self.set_loading(True, "Saving settings…")
         self.save_requested.emit(self.values())
@@ -5877,7 +5948,10 @@ class DashboardWindow(QMainWindow):
         detection_supported = (
             "DET" in self._capabilities and self._capabilities["DET"] != "0"
         )
-        dialog = BoardSettingsDialog(initial, detection_supported, self)
+        vt_supported = self._capabilities.get("VT") == "1"
+        dialog = BoardSettingsDialog(
+            initial, detection_supported, self, vt_supported=vt_supported
+        )
         self._board_settings_dialog = dialog
         dialog.finished.connect(lambda _result: self._clear_board_settings_dialog(dialog))
         dialog.save_requested.connect(

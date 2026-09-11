@@ -106,8 +106,10 @@ current delta are plotted live and can be saved to CSV.
 
 ## Board Tools
 
-- Board Settings edits timing, safety, debug, and supported detection
-  thresholds.
+- Board Settings edits Lansing timing or Rockford's per-actuator VT budget,
+  plus safety, debug, and supported detection thresholds. Rockford shows the
+  limit in V·s, its permanent user-modified audit state, and a hardware-damage
+  warning before any change.
 - Bluetooth Config enables Bluetooth, configures security, clears bonds, and
   changes only the suffix of the advertised name. Firmware always adds `FR-`.
 - Wi-Fi Config selects Client or Access Point mode. Client mode scans and joins

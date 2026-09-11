@@ -2,6 +2,21 @@
 
 This note exists so a future Codex session can continue the Lansing firmware and Python SDK work without needing the original chat history.
 
+## 2026-09 Rockford VT Budget
+
+Rockford firmware 1.1 no longer uses Lansing's `CFG MAX`/`CFG DIS` timing
+model. It advertises `VT>1`, accepts `CFG VT_LIMIT [V·s]`, defaults to 10,000
+V·s per actuator, and reports `VT_BALANCE_VMS` in status. Firmware integrates
+signed output with a 32-bit integer V·ms balance. Normal stop immediately uses
+full reverse; budget exhaustion ramps from full forward to full reverse at
+100 V/s, then holds full reverse until the 1:1 balance reaches zero.
+
+Every accepted VT-limit write sets a permanent EEPROM audit marker. Factory
+reset restores 10,000 V·s but preserves that marker. The dashboard and terminal
+must warn that changing the limit can permanently damage actuators or board
+electronics. Lansing remains on the legacy time-based behavior documented in
+the older sections below.
+
 ## Repositories
 
 There are two related repositories:

@@ -67,7 +67,7 @@ The dashboard opens to the main Lansing Dashboard window. Before connection, boa
 The dashboard is organized into four numbered operating areas:
 
 1. Connection: USB serial, Bluetooth LE, TCP, or TLS selection; connect, disconnect, and connection state.
-2. Telemetry: power-supply state, output-connection state, measured voltage, measured current, and timing configuration.
+2. Telemetry: power-supply state, output-connection state, measured voltage, measured current, and board configuration.
 3. Actuator Tools & Cards: grouped actuator cards and action tabs for initialize, diagnose, recover, and square-wave operation.
 4. Event Log: timestamped connection, status, detection, diagnosis, recovery, initialization, and square-wave messages.
 

@@ -15,6 +15,7 @@ from fluid_reality import (
     NetworkBoard,
     ProtocolError,
     Rockford,
+    RockfordConfig,
     WifiBoard,
 )
 
@@ -72,6 +73,43 @@ def test_factory_reset_uses_usb_only_firmware_command_and_clears_cached_states()
     assert transport.writes == ["CFG FACTORY_RESET"]
     assert board.actuator_states == (ActuatorState.UNKNOWN,) * board.actuator_count
     assert board.last_detection(2) is None
+
+
+def test_rockford_vt_budget_configuration_and_sticky_marker():
+    transport = FakeTransport(
+        [
+            "OK:VT_LIMIT_VS>10000",
+            "OK:CFG_VT_LIMIT,VT_LIMIT_VS>12000,VT_MODIFIED>YES",
+            "OK:CFG,VT_LIMIT_VS>12000,VT_MODIFIED>YES,SAFE>ON,DEBUG>OFF",
+        ]
+    )
+    board = Rockford(transport=transport)
+
+    assert board.vt_limit_vs() == 10_000
+    assert board.vt_limit_vs(12_000) == 12_000
+    assert board.read_config() == RockfordConfig(
+        vt_limit_vs=12_000,
+        vt_limit_modified=True,
+        safe=True,
+        debug=False,
+    )
+    assert transport.writes == ["CFG VT_LIMIT", "CFG VT_LIMIT 12000", "CFG"]
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "10000"])
+def test_rockford_vt_budget_requires_integer(value):
+    board = Rockford(transport=FakeTransport())
+
+    with pytest.raises(TypeError, match="integer"):
+        board.vt_limit_vs(value)
+
+
+@pytest.mark.parametrize("value", [0, 4_294_968])
+def test_rockford_vt_budget_range(value):
+    board = Rockford(transport=FakeTransport())
+
+    with pytest.raises(ValueError, match="between"):
+        board.vt_limit_vs(value)
 
 
 @pytest.mark.parametrize(

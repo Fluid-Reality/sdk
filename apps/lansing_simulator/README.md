@@ -2,9 +2,11 @@
 
 Configuration designer and raw-TCP software board simulator. Choose the Lansing
 24-actuator profile or Rockford eight-actuator profile in the designer toolbar.
-The Rockford profile models capabilities, `DT0`/`DT1`, `OUC`, network/AP, and
-Bluetooth configuration and framed firmware updates. USB-only factory reset is
-correctly rejected because the simulator itself is a TCP endpoint.
+The Rockford profile models capabilities, `DT0`/`DT1`, `OUC`, network/AP,
+Bluetooth configuration, framed firmware updates, and the Rockford 1.1 VT
+configuration/status protocol. Its default is 10,000 V·s; setting `VT_LIMIT`
+also sets the user-modified audit flag. USB-only factory reset is correctly
+rejected because the simulator itself is a TCP endpoint.
 
 ## Run
 
@@ -123,10 +125,13 @@ drive reduces actuator current by the configured per-volt, per-second running
 rate down to the minimum. Offline and discharge time recover current at the
 offline rate up to the maximum starting current. Text `ACT`, binary stream,
 manual `OUT`, `DIA`, and `INI` activation paths are represented. The Rockford
-profile also exposes its direct top/digital-bottom `OUC` path and two-stage
-detection protocol.
+profile also exposes its direct top/digital-bottom `OUC` path, two-stage
+detection protocol, `VT>1` capability, and VT configuration/status fields. The
+simulator models that protocol surface; physical 100 V/s forced-discharge
+timing remains firmware behavior.
 
-The simulator requires `fluid-reality>=0.2.1` for virtual-port aliases and the
+The simulator requires `fluid-reality>=0.2.2` for Rockford VT-budget support,
+virtual-port aliases, and the
 raw TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
 access is required.
 

@@ -32,6 +32,8 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 - Emit human-readable text or newline-delimited JSON.
 - Select a Lansing or Rockford hardware profile with `--board`.
 - Inspect Rockford capabilities and configure its network, Wi-Fi, and Bluetooth.
+- Inspect Rockford's VT budget and change it only through the explicit
+  `vt_limit <V·s> I_UNDERSTAND` safety confirmation.
 - Install firmware and perform a confirmation-guarded, USB-only factory reset.
 - Initialize actuators to a target current delta using PowerShell, POSIX shell,
   or Windows batch automation.
@@ -83,6 +85,7 @@ rockford(disconnected)> connect <serial-tcp-tls-or-ble-endpoint>
 rockford> capabilities
 rockford> network status
 rockford> bluetooth status
+rockford> vt_limit
 rockford> psu on
 rockford> detect
 ```
