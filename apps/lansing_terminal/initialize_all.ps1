@@ -28,8 +28,8 @@ Serial port used by the Lansing controller, such as COM6, /dev/ttyACM0, or
 
 .PARAMETER TargetDeltaMa
 Target baseline-to-forward current delta in milliamps. The allowed range is
-0.1 through 3.0 mA: below 0.1 mA is classified as Not connected, while above
-3.0 mA remains an Error under the SDK detection thresholds.
+0.05 through 3.0 mA. Only the initial DT0 detection can classify an actuator
+as Not connected; later conditioned readings classify it as Ready or Error.
 
 .PARAMETER Actuators
 Actuator indices to process. Defaults to all supported indices, 0 through 23.
@@ -89,7 +89,7 @@ param(
     [string]$Port,
 
     [Parameter(Mandatory = $true, Position = 1)]
-    [ValidateRange(0.1, 3.0)]
+    [ValidateRange(0.05, 3.0)]
     [double]$TargetDeltaMa,
 
     [Parameter()]
@@ -436,20 +436,6 @@ try {
                     Attempts = $attempt
                     Detail   = "Target delta reached"
                 })
-                $resolved = $true
-                break
-            }
-
-            if ($newState -eq "Not connected") {
-                Write-Host "Actuator ${actuator}: now reports not connected; stopping." -ForegroundColor Red
-                [void]$results.Add([pscustomobject]@{
-                    Actuator = $actuator
-                    Status   = "Not connected"
-                    DeltaMa  = $newDelta
-                    Attempts = $attempt
-                    Detail   = "State changed to Not connected after initialization"
-                })
-                $scriptFailed = $true
                 $resolved = $true
                 break
             }

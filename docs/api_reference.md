@@ -292,8 +292,8 @@ These constants define the Lansing SDK model:
 | `Lansing.default_timeout_s` | `45.0` | Default serial read timeout. Long enough for diagnostics and initialization. |
 | `Lansing.min_output` | `0` | Minimum normal or manual output value. |
 | `Lansing.max_output` | `255` | Maximum normal or manual output value. |
-| `Lansing.not_connected_delta_ma` | `0.1` | Detection delta below this is `Not connected`. |
-| `Lansing.error_delta_ma` | `3.0` | Detection delta above this is `Error`. |
+| `Lansing.not_connected_delta_ma` | `0.05` | DT0 detection delta below this is `Not connected`. |
+| `Lansing.error_delta_ma` | `3.0` | DT1 or diagnosis delta at or above this is `Error`. |
 | `Lansing.initialization_stages_v` | `(25.0, 50.0, 100.0, 200.0)` | Initialization voltage stages. |
 | `Lansing.initialization_stage_duration_s` | `30.0` | Seconds per initialization stage. |
 | `Lansing.initialization_phase_interval_s` | `0.5` | Alternation interval during initialization. |
@@ -675,7 +675,7 @@ Detect one actuator and return only its classified state.
 Detection uses a two-stage, forward-only current test. It zeros all 24 actuator
 outputs, measures baseline current, and drives only the selected actuator at
 maximum positive output. After 250 ms it measures the initial delta. A delta
-below 0.1 mA immediately returns `Not connected`, while a delta above 10 mA
+below 0.05 mA immediately returns `Not connected`, while a delta above 10 mA
 immediately returns `Error`. Only the range between those guards proceeds: the
 same positive output remains continuously active for another 2 seconds and the
 SDK measures the conditioned delta. It then updates the cached SDK state and returns:
@@ -718,10 +718,14 @@ measurement, or the initial measurement when the 10 mA guard stops the test.
 
 Classification rules:
 
-- Initial delta `< 0.1 mA`: `Not connected`, without running the 2-second stage.
+- Initial delta `< 0.05 mA`: `Not connected`, without running the 2-second stage.
 - Initial delta `> 10 mA`: `Error`, without running the 2-second stage.
 - Final delta `< 3 mA`: `Ready`.
 - Final delta `>= 3 mA`: `Error`.
+
+Only the initial DT0 stage assigns `Not connected`. Once DT0 establishes
+presence, the conditioned stage can return only `Ready` or `Error`, even when
+its final delta is below the detection threshold.
 
 The SDK restores the previous safety setting and forces the target output to
 zero even when a measurement or transport operation fails.
@@ -763,9 +767,11 @@ print(detection.state.value)
 
 Classification thresholds:
 
-- `delta_ma < 0.1`: `Not connected`
-- `delta_ma > 3.0`: `Error`
+- `delta_ma >= 3.0`: `Error`
 - otherwise: `Ready`
+
+Diagnosis never assigns `Not connected`; rerun DT0 to make a new connection
+determination.
 
 ## Initialization
 

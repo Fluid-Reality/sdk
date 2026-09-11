@@ -501,7 +501,7 @@ def test_lansing_detect_marks_actuator_ready(monkeypatch):
 
 
 def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
-    transport = FakeTransport(detection_responses(1.0, 1.05, None))
+    transport = FakeTransport(detection_responses(1.0, 1.04, None))
     board = Lansing(transport=transport)
     sleeps = []
     monkeypatch.setattr("fluid_reality.boards.board.time.sleep", sleeps.append)
@@ -525,41 +525,43 @@ def test_lansing_detect_never_accepts_current_below_baseline(monkeypatch):
     assert detection.delta_ma == 0.13
 
 
-def test_conditioned_detection_rejects_current_that_falls_below_baseline(monkeypatch):
+def test_conditioned_detection_preserves_presence_when_current_falls_below_baseline(monkeypatch):
     transport = FakeTransport(detection_responses(1.17, 1.80, 1.04))
     board = Lansing(transport=transport)
     monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
-    assert board.detect(7) is ActuatorState.NOT_CONNECTED
+    assert board.detect(7) is ActuatorState.READY
 
 
-def test_diagnosis_never_accepts_current_below_baseline():
+def test_diagnosis_below_detection_threshold_preserves_detected_actuator():
     board = Lansing(transport=FakeTransport())
+    board._actuator_states[6] = ActuatorState.READY
 
     detection = board.classify_diagnosis(
         Diagnosis(actuator=6, baseline_ma=1.17, forward_ma=1.04, discharge_ma=1.10)
     )
 
-    assert detection.state is ActuatorState.NOT_CONNECTED
+    assert detection.state is ActuatorState.READY
+    assert board.actuator_state(6) is ActuatorState.READY
 
 
-def test_lansing_detect_rejects_conditioned_delta_below_connection_limit(monkeypatch):
-    transport = FakeTransport(detection_responses(1.0, 1.2, 1.05))
+def test_lansing_detect_preserves_dt0_presence_below_conditioned_connection_limit(monkeypatch):
+    transport = FakeTransport(detection_responses(1.0, 1.2, 1.04))
     board = Lansing(transport=transport)
     monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
-    assert board.detect(3) is ActuatorState.NOT_CONNECTED
+    assert board.detect(3) is ActuatorState.READY
     assert board.last_detection(3).initial_delta_ma == 0.2
-    assert board.last_detection(3).delta_ma == 0.05
+    assert board.last_detection(3).delta_ma == 0.04
 
 
-def test_reported_detection_limit_applies_to_conditioned_reading(monkeypatch):
+def test_reported_detection_limit_does_not_revoke_dt0_presence(monkeypatch):
     transport = FakeTransport(detection_responses(0.96, 1.40, 1.18))
     board = Lansing(transport=transport)
     board.not_connected_delta_ma = 0.34
     monkeypatch.setattr("fluid_reality.boards.board.time.sleep", lambda _duration: None)
 
-    assert board.detect(1) is ActuatorState.NOT_CONNECTED
+    assert board.detect(1) is ActuatorState.READY
     assert board.last_detection(1).delta_ma == pytest.approx(0.22)
 
 

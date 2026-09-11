@@ -2,6 +2,12 @@
 
 This note exists so a future Codex session can continue the Lansing firmware and Python SDK work without needing the original chat history.
 
+## 2026-09 SDK 0.2.4 Detection Semantics
+
+- Default minimum DT0 detection delta is `0.05 mA`.
+- Only DT0 assigns `Not connected`. DT1, diagnosis, and post-initialization
+  classification preserve DT0 presence and return only `Ready` or `Error`.
+
 ## 2026-09 SDK 0.2.3 Dashboard Compatibility Fixes
 
 The universal dashboard now replaces its generic SDK wrapper with the detected
@@ -181,11 +187,13 @@ Detection procedure:
 
 Detection thresholds:
 
-- delta `< 0.1 mA`: `Not connected`
-- delta `> 3.0 mA`: `Error`
+- DT0 delta `< 0.05 mA`: `Not connected`
+- delta `>= 3.0 mA`: `Error`
 - otherwise: `Ready`
 
-Delta is computed from baseline and forward current. During the session the not-connected threshold moved through `.05 mA` and settled at `.1 mA`; the error threshold settled at `3.0 mA`.
+Delta is computed from baseline and forward current. Only DT0 may assign `Not
+connected`; later diagnosis and conditioned detection preserve presence. The
+not-connected threshold is `.05 mA`, and the error threshold is `3.0 mA`.
 
 The event log should be verbose during detection, including:
 
@@ -198,7 +206,7 @@ The event log should be verbose during detection, including:
 - baseline, forward, discharge, delta, and classification
 - final group summary
 
-Event-log messages are HTML-escaped because strings like `<0.10 mA` otherwise disappear when appended to `QTextEdit` as rich text.
+Event-log messages are HTML-escaped because strings like `<0.05 mA` otherwise disappear when appended to `QTextEdit` as rich text.
 
 ### Dashboard Action Availability
 
@@ -301,7 +309,7 @@ An offscreen PySide smoke test was also used to verify:
 - detection can show `Detecting`
 - detected-good changes to `Ready`
 - disconnect resets cards to `N/A`
-- event log preserves `<0.10 mA`
+- event log preserves `<0.05 mA`
 
 On this Windows machine, the offscreen Qt renderer can display square placeholder glyphs because of headless/offscreen font limitations. Do not confuse that with the macOS screenshot issue; the Mac issue was about real Qt palette/font fallback behavior.
 

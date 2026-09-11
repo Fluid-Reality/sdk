@@ -204,16 +204,6 @@ class LansingInitializer:
                 )
                 return
 
-            if new_state == "Not connected":
-                self._record_failure(
-                    actuator,
-                    "Not connected",
-                    new_delta,
-                    attempt,
-                    "State changed to Not connected after initialization.",
-                )
-                return
-
             if new_state not in {"Ready", "Error"}:
                 self._record_failure(
                     actuator,
@@ -386,8 +376,8 @@ class LansingInitializer:
 
 def target_delta(value: str) -> float:
     parsed = float(value)
-    if not 0.1 <= parsed <= 3.0:
-        raise argparse.ArgumentTypeError("must be between 0.1 and 3.0 mA")
+    if not 0.05 <= parsed <= 3.0:
+        raise argparse.ArgumentTypeError("must be between 0.05 and 3.0 mA")
     return parsed
 
 
@@ -410,7 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--target-delta-ma",
         required=True,
         type=target_delta,
-        help="target current delta in mA (0.1 through 3.0)",
+        help="target current delta in mA (0.05 through 3.0)",
     )
     parser.add_argument(
         "--actuators",

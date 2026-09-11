@@ -28,7 +28,7 @@ python -m pip install -r apps\fluidreality_dashboard\requirements.txt
 python apps\fluidreality_dashboard\app.py
 ```
 
-The dashboard requires `fluid-reality[bluetooth]>=0.2.3`. On macOS or Linux,
+The dashboard requires `fluid-reality[bluetooth]>=0.2.4`. On macOS or Linux,
 create the environment with `python3 -m venv .venv` and activate it with
 `source .venv/bin/activate`.
 
@@ -74,7 +74,7 @@ Actuator cards show the current classification:
 
 Only DT0 assigns `Not connected`. Once an actuator has been detected, later
 diagnosis does not change it back to `Not connected`; run DT0 again to make a
-new connection determination. The default detection-current delta is 0.10 mA.
+new connection determination. The default detection-current delta is 0.05 mA.
 
 ## Process Windows
 
@@ -221,7 +221,7 @@ needed; Save Log exports the session.
 | Serial port is missing | Refresh the list, reconnect USB, and check the driver. |
 | TCP connection times out | Verify the board IP, subnet, port, TCP-server toggle, and PC route. |
 | Authentication is required | Enable Use access token and enter the configured token. |
-| Board Settings reports an unsupported key | Confirm firmware identity and use SDK/dashboard 0.2.3 or newer. |
+| Board Settings reports an unsupported key | Confirm firmware identity and use SDK/dashboard 0.2.4 or newer. |
 | Actuator is `Not connected` | Inspect wiring, then rerun DT0. |
 | Actuator is `Error` | Run Initialize and Diagnose; use Recover if it still ends in error. |
 | A tool button is disabled | Connect through a supported transport and confirm the firmware advertises its capability. |

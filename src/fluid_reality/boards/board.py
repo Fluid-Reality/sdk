@@ -86,7 +86,7 @@ class Board(TransportBoard):
     default_timeout_s = 45.0
     min_output = 0
     max_output = 255
-    not_connected_delta_ma = 0.1
+    not_connected_delta_ma = 0.05
     error_delta_ma = 3.0
     initial_detection_error_delta_ma = 10.0
     initial_detection_duration_s = 0.25
@@ -626,15 +626,12 @@ class Board(TransportBoard):
         else:
             final_forward_ma = conditioned_forward_ma
             final_delta_ma = round(abs(conditioned_forward_ma - baseline_ma), 6)
-            if (
-                final_forward_ma <= baseline_ma
-                or final_delta_ma < self.not_connected_delta_ma
-            ):
-                state = ActuatorState.NOT_CONNECTED
-            elif final_delta_ma < self.error_delta_ma:
-                state = ActuatorState.READY
-            else:
+            # The initial stage is DT0's connection decision. Once it reports
+            # presence, the conditioned stage may classify only Ready or Error.
+            if final_delta_ma >= self.error_delta_ma:
                 state = ActuatorState.ERROR
+            else:
+                state = ActuatorState.READY
 
         detection = ActuatorDetection(
             actuator=actuator,
@@ -1252,11 +1249,10 @@ class Board(TransportBoard):
 
     def _detection_from_diagnosis(self, diagnosis: Diagnosis) -> ActuatorDetection:
         delta_ma = round(abs(diagnosis.forward_ma - diagnosis.baseline_ma), 6)
-        if diagnosis.forward_ma <= diagnosis.baseline_ma:
-            state = ActuatorState.NOT_CONNECTED
-        elif delta_ma < self.not_connected_delta_ma:
-            state = ActuatorState.NOT_CONNECTED
-        elif delta_ma > self.error_delta_ma:
+        # Connection presence belongs exclusively to DT0. Diagnosis may update
+        # a detected actuator between Ready and Error, but a low finishing
+        # current must never revoke the earlier DT0 presence result.
+        if delta_ma >= self.error_delta_ma:
             state = ActuatorState.ERROR
         else:
             state = ActuatorState.READY

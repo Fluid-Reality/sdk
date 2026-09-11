@@ -1,2 +1,2 @@
-fluid-reality>=0.2.3
+fluid-reality>=0.2.4
 psutil>=5.9

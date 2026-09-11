@@ -41,14 +41,14 @@ with `DET>0` runs batch `DT0` using one shared baseline and then runs `DT1` only
 for actuators found present. Results appear as they arrive.
 
 - `Ready` means the actuator passed detection and can be driven.
-- `Error` means current is above the configured DT1 error threshold.
+- `Error` means current is at or above the configured DT1 error threshold.
 - `Not connected` is assigned only by `DT0` when the minimum detection delta is
   not reached.
 - `N/A` means no detection result is available in the dashboard session.
 
 After detection, a later diagnosis does not change an actuator back to
 `Not connected`; a new `DT0` is required. The default minimum detection delta
-is `0.10 mA`.
+is `0.05 mA`.
 
 ## Actuator Tools
 

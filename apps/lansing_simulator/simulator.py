@@ -549,7 +549,15 @@ class LansingDeviceSimulator:
         delta = 0.0 if profile is None else self._actuator_current_ma[actuator]
         forward = base + delta
         threshold = 3.0 if conditioned else 10.0
-        state = "NOT_CONNECTED" if delta < 0.1 else ("ERROR" if delta > threshold else ("READY" if conditioned else "PRESENT"))
+        state = (
+            "ERROR"
+            if delta >= threshold
+            else (
+                "READY"
+                if conditioned
+                else ("NOT_CONNECTED" if delta < 0.05 else "PRESENT")
+            )
+        )
         return f"OK:ACT>{actuator},BASE>{base:.3f},FWD>{forward:.3f},DELTA>{delta:.3f},STATE>{state}"
 
     def _detect_initial(self, params: list[str]) -> str | list[str]:
@@ -667,7 +675,7 @@ class LansingDeviceSimulator:
                     f"VT_MODIFIED>{'YES' if self.vt_limit_modified else 'NO'},"
                     f"SAFE>{'ON' if self.safe else 'OFF'},"
                     f"DEBUG>{'ON' if self.debug else 'OFF'},"
-                    "DET_MIN>0.10,DT0_ERR>10.00,DT1_ERR>3.00"
+                    "DET_MIN>0.05,DT0_ERR>10.00,DT1_ERR>3.00"
                 )
             if params[0].upper() == "VT_LIMIT":
                 if len(params) == 1:

@@ -334,14 +334,18 @@ Detection compares forward current with baseline current:
 delta_mA = abs(forward_mA - baseline_mA)
 ```
 
-| Current delta | Classification |
+| Stage and current delta | Classification |
 | --- | --- |
-| `< 0.1 mA` | `Not connected` |
-| `0.1 mA` through `3.0 mA` inclusive | `Ready` |
-| `> 3.0 mA` | `Error` |
+| DT0 `< 0.05 mA` | `Not connected` |
+| DT0 `0.05–10.0 mA` | `Present`; continue with DT1 |
+| DT0 `> 10.0 mA` | `Error` |
+| DT1 or diagnosis `< 3.0 mA` | `Ready` |
+| DT1 or diagnosis `>= 3.0 mA` | `Error` |
 
 The discharge-current measurement is reported for diagnostic context but is
-not used in the current SDK classification threshold calculation.
+not used in the current SDK classification threshold calculation. Only DT0 can
+assign `Not connected`; a later conditioned or diagnostic reading never revokes
+the presence established by DT0.
 
 ### Power controls
 
@@ -789,7 +793,7 @@ For each actuator, the SDK:
 1. zeros the manual outputs for all 24 actuators, cancelling activation and discharge;
 2. measures baseline current;
 3. drives only the target forward at maximum output for 250 ms;
-4. returns `Not connected` below 0.1 mA or `Error` above 10 mA;
+4. returns `Not connected` below 0.05 mA or `Error` above 10 mA;
 5. otherwise keeps the target continuously forward for another 2 seconds;
 6. classifies the final delta and stores the result in the current SDK object; and
 7. stops the target without reverse discharge and restores the previous safety setting.
@@ -1512,11 +1516,11 @@ delta_mA = abs(forward_mA - baseline_mA)
 It is not the absolute baseline current, forward-current measurement, discharge
 current, PSU current limit, or actuator output value.
 
-The target must be from `0.1` through `3.0 mA`:
+The target must be from `0.05` through `3.0 mA`:
 
-- below `0.1 mA`, the SDK classifies the actuator as `Not connected`;
-- from `0.1` through `3.0 mA`, the SDK classifies it as `Ready`; and
-- above `3.0 mA`, the SDK classifies it as `Error`.
+- DT0 alone classifies a delta below `0.05 mA` as `Not connected`;
+- after DT0 establishes presence, a delta below `3.0 mA` is `Ready`; and
+- a delta at or above `3.0 mA` is `Error`.
 
 A typical invocation using a `1.5 mA` target is:
 
@@ -1554,9 +1558,8 @@ For each actuator, the workflow is:
 9. Compare the new delta with the previous post-detection delta.
 10. Stop successfully when the actuator is `Ready` and
     `delta_ma <= target_delta_ma`.
-11. Stop unsuccessfully when the delta no longer improves, the actuator changes
-    to `Not connected`, a command fails, an unexpected state is returned, or
-    the maximum attempt count is reached.
+11. Stop unsuccessfully when the delta no longer improves, a command fails, an
+    unexpected state is returned, or the maximum attempt count is reached.
 12. Continue with the next actuator after reporting the result.
 
 Detection and initialization intentionally run in the same terminal process on
@@ -1569,7 +1572,6 @@ while `init` requires a preceding detection.
 | --- | --- | --- |
 | Initial or post-initialization delta reaches target while `Ready` | `Target reached` | No |
 | Initial detection is `Not connected` | `Not connected`; no initialization attempted | No |
-| Post-initialization state changes to `Not connected` | `Not connected`; processing stops | Yes |
 | New delta improvement is less than or equal to the configured minimum | `Stalled` | Yes |
 | Maximum initialization attempts are exhausted above target | `Above target` | Yes |
 | Terminal, transport, firmware, or protocol command fails | `Command failed` | Yes |
@@ -1614,7 +1616,7 @@ PowerShell parameters:
 | Parameter | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `-Port` | Yes | — | Serial port such as `COM6` or `/dev/ttyACM0` |
-| `-TargetDeltaMa` | Yes | — | Target current delta, `0.1–3.0 mA` |
+| `-TargetDeltaMa` | Yes | — | Target current delta, `0.05–3.0 mA` |
 | `-Actuators` | No | `0..23` | Comma-separated PowerShell integer array |
 | `-PythonExecutable` | No | `python` | Python used to run `lansing_terminal.py` |
 | `-TerminalPath` | No | Adjacent `lansing_terminal.py` | Alternate Lansing terminal path |
@@ -1652,7 +1654,7 @@ Shared options:
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `--port PORT` | Yes | — | Serial device used by the Lansing controller |
-| `--target-delta-ma MA` | Yes | — | Target current delta, `0.1–3.0 mA` |
+| `--target-delta-ma MA` | Yes | — | Target current delta, `0.05–3.0 mA` |
 | `--actuators N [N ...]` | No | `0–23` | Space-separated actuator indices |
 | `--python-executable PATH` | No | Current interpreter | Python used to launch `lansing_terminal.py` |
 | `--terminal-path PATH` | No | Adjacent `lansing_terminal.py` | Alternate Lansing terminal path |
@@ -1819,7 +1821,7 @@ generated terminal commands when diagnosing automation behavior.
 | Code | Meaning |
 | ---: | --- |
 | `0` | Every connected actuator reached the target; initially not-connected actuators were skipped. |
-| `1` | At least one actuator stalled, stayed above target, changed to not connected after initialization, or encountered a command/result failure. |
+| `1` | At least one actuator stalled, stayed above target, or encountered a command/result failure. |
 | `2` | `.sh`/`.bat` argument parsing or validation failed. |
 | `130` | `.sh`/`.bat` shared workflow was interrupted by the operator. |
 
@@ -1892,18 +1894,18 @@ directory or provide `-TerminalPath`/`--terminal-path`.
 uses a fresh terminal process, re-establishes a clean protocol boundary, and
 detects before initialization.
 
-**An actuator is `Ready` but continues initializing.** `Ready` means its delta
-is within `0.1–3.0 mA`. The requested target may be lower than its present
+**An actuator is `Ready` but continues initializing.** `Ready` means its
+post-DT0 delta is below `3.0 mA`. The requested target may be lower than its present
 delta, so the target workflow continues until the explicit target is reached.
 
 **An actuator stops as `Stalled`.** Its delta failed to decrease by more than
 the configured minimum. The script stops that actuator to avoid repeating a
 conditioning sequence without measurable progress.
 
-**An initially missing actuator does not make the run fail.** Initial `Not
-connected` is treated as an unpopulated position and skipped. A transition to
-`Not connected` after initialization is treated as a failure because the state
-changed during active processing.
+**An initially missing actuator does not make the run fail.** A DT0 result of
+`Not connected` is treated as an unpopulated position and skipped. Later
+initialization and diagnosis cannot change a detected actuator back to that
+state; only another DT0 run can make a new connection determination.
 
 **The run can take a long time.** Each initialization is approximately two
 minutes under default SDK timing. Reduce the actuator selection or maximum
@@ -2000,7 +2002,7 @@ Proceed only if it reports `Ready`.
 
 ### Detection reports `Not connected`
 
-The measured current delta was below `0.1 mA`. Keep the PSU connection off,
+DT0 measured a current delta below `0.05 mA`. Keep the PSU connection off,
 inspect the actuator and physical connection, confirm port numbering, and
 detect again.
 

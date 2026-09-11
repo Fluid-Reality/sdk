@@ -221,7 +221,7 @@ Before driving an actuator, call `board.detect(actuator)`. Current Rockford
 firmware performs DT0 and DT1 detection on the board. `Not connected` is only a
 DT0 result; once an actuator is present, later diagnosis does not return it to
 `Not connected` unless DT0 is run again. `set_actuator()` only works when the
-SDK state is `Ready`.
+SDK state is `Ready`. The default minimum DT0 detection delta is `0.05 mA`.
 
 Actuators may need initialization after storage, shipping, or long periods
 without use. If `detect()` returns `Error`, run `board.initialize(actuator)`.

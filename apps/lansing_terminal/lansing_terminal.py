@@ -752,9 +752,9 @@ class LansingTerminal(cmd.Cmd):
     def do_detect(self, arg: str) -> None:
         """detect [<actuator>|group <0|1|2>]
 
-        Run SDK detection. Detection turns the actuator group off, diagnoses
-        current delta, and records Ready, Error, or Not connected state. With
-        no arguments, detects group 0.
+        Run SDK detection. DT0 records Present, Error, or Not connected; the
+        conditioned DT1 stage records Ready or Error. With no arguments,
+        detects all actuators.
         """
 
         parts = shlex.split(arg)
