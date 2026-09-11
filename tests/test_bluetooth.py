@@ -74,13 +74,14 @@ def test_discovery_excludes_anonymous_advertisements_and_deduplicates(monkeypatc
             assert timeout == 0.1
             assert return_adv is True
 
-            def entry(name, address, rssi, service_uuids=()):
+            def entry(name, address, rssi, service_uuids=(), manufacturer_data=None):
                 return (
                     SimpleNamespace(name=name, address=address),
                     SimpleNamespace(
                         local_name=name,
                         rssi=rssi,
                         service_uuids=service_uuids,
+                        manufacturer_data=manufacturer_data or {},
                     ),
                 )
 
@@ -94,6 +95,13 @@ def test_discovery_excludes_anonymous_advertisements_and_deduplicates(monkeypatc
                     -20,
                     (BLE_UART_SERVICE_UUID,),
                 ),
+                "custom-name": entry(
+                    "LabBoard_7",
+                    "custom-address",
+                    -35,
+                    manufacturer_data={65535: b"FR|Rockford|0.8"},
+                ),
+                "fr-name": entry("FR-TestBoard", "fr-address", -40),
                 "headphones": entry("Headphones", "headphones-address", -10),
             }
 
@@ -105,6 +113,8 @@ def test_discovery_excludes_anonymous_advertisements_and_deduplicates(monkeypatc
     devices = asyncio.run(discover_bluetooth_boards_async(timeout=0.1))
 
     assert [(device.name, device.address, device.rssi) for device in devices] == [
+        ("LabBoard_7", "custom-address", -35),
+        ("FR-TestBoard", "fr-address", -40),
         ("Rockford-A172E0", "board-address", -44)
     ]
 
@@ -155,3 +165,20 @@ def test_bluetooth_authentication_reports_rejected_token() -> None:
 
 def test_rockford_composes_wifi_and_bluetooth_capabilities() -> None:
     assert issubclass(Rockford, BluetoothBoard)
+
+
+def test_bluetooth_name_command_accepts_only_the_fr_name_suffix() -> None:
+    class RecordingBluetoothBoard(BluetoothBoard):
+        def __init__(self) -> None:
+            self.commands: list[tuple[object, ...]] = []
+
+        def raw_command(self, *parts: object):
+            self.commands.append(parts)
+            return [SimpleNamespace(fields={"NAME": "FR-Lab_7"})]
+
+    board = RecordingBluetoothBoard()
+
+    assert board.set_bluetooth_name("Lab_7") == {"NAME": "FR-Lab_7"}
+    assert board.commands == [("BLT", "NAME", "Lab_7")]
+    with pytest.raises(ValueError, match="suffix"):
+        board.set_bluetooth_name("FR-Lab_7")

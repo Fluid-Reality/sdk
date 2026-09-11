@@ -52,8 +52,9 @@ The kit photo shows the standard Lansing Development Kit layout:
 
 6. Connect the USB cable to the computer.
 
-7. Leave the dashboard power supply and output connection off until the
-   actuators are positioned and the operator is ready.
+7. Leave the dashboard Power switch off until the actuators are positioned and
+   the operator is ready. On hardware with PSC, this one switch controls both
+   the PSU and its output connection.
 
 ## Actuator Port Numbering
 
@@ -95,16 +96,16 @@ README:
 For the graphical dashboard, setup instructions, and operator workflow, use the
 dashboard README:
 
-[Lansing Dashboard README](../../apps/lansing_dashboard/README.md)
+[Fluid Reality Dashboard README](../../apps/fluidreality_dashboard/README.md)
 
 The full dashboard operator manual is also available here:
 
-[Lansing Development Kit Dashboard User Manual](../../apps/lansing_dashboard/docs/lansing_dashboard_manual.md)
+[Dashboard User Manual](../../apps/fluidreality_dashboard/docs/lansing_dashboard_manual.md)
 
 ## Basic Safety Notes
 
-- Keep the output disconnected until actuators are positioned and ready.
+- Keep Power off until actuators are positioned and ready.
 - Do not handle actuator wiring while the output is connected.
 - Use the dashboard or SDK detection step before driving an actuator.
 - If an actuator reports `Error`, run initialization before normal use.
-- Turn output off and power supply off before changing the physical setup.
+- Turn Power off before changing the physical setup.

@@ -1,4 +1,4 @@
-"""Raw-TCP Lansing firmware simulator.
+"""Raw-TCP Fluid Reality firmware simulator.
 
 The simulator intentionally talks through the same byte stream as the hardware.
 Applications continue calling ``Lansing(port)`` and select a virtual-port alias
@@ -8,11 +8,14 @@ configured through ``FLUID_REALITY_VIRTUAL_PORTS``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import re
+import struct
 import threading
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -128,6 +131,7 @@ class LansingDeviceSimulator:
         random_seed: int | None = 0,
         log: Callable[[str], None] | None = None,
         state_changed: Callable[["LansingDeviceSimulator"], None] | None = None,
+        board_type: str = "lansing",
     ) -> None:
         self._write_bytes = write_bytes
         self.config = config
@@ -136,22 +140,45 @@ class LansingDeviceSimulator:
         self._random = random.Random(random_seed)
         self._log = log
         self._state_changed = state_changed
+        self.board_type = board_type.lower()
+        if self.board_type not in {"lansing", "rockford"}:
+            raise ValueError("board_type must be 'lansing' or 'rockford'")
+        self.actuator_count = 8 if self.board_type == "rockford" else ACTUATOR_COUNT
         self._stream_mode = False
         self._stream_packet = bytearray()
         self._line = bytearray()
+        self._fwu_frame = bytearray()
+        self._fwu_image = bytearray()
+        self._fwu_expected_size = 0
+        self._fwu_expected_sha256 = ""
+        self._fwu_sequence = 0
         self.psu = False
         self.psc = False
         self.safe = True
         self.debug = False
         self.max_active_ms = 5000
         self.discharge_ms = 2000
-        self.values = [0] * ACTUATOR_COUNT
-        self.manual = [(0, 0)] * ACTUATOR_COUNT
-        self.total_ms = [0] * ACTUATOR_COUNT
-        self._active_since: list[float | None] = [None] * ACTUATOR_COUNT
+        self.values = [0] * self.actuator_count
+        self.manual = [(0, 0)] * self.actuator_count
+        self.total_ms = [0] * self.actuator_count
+        self._active_since: list[float | None] = [None] * self.actuator_count
+        self._detection_baseline_ma: float | None = None
+        self._detected_present = [False] * self.actuator_count
+        self.network = {
+            "MODE": "CLIENT", "DHCP": "ON", "IP": "192.168.24.1",
+            "SUBNET": "255.255.255.0", "GATEWAY": "0.0.0.0",
+            "DNS1": "0.0.0.0", "DNS2": "0.0.0.0", "HOST": "rockford-sim",
+            "TCP": "ON", "PORT": "49765", "BIND": "ANY",
+        }
+        self.bluetooth = {"ENABLED": "ON", "NAME": "FR-Rockford-Sim", "SEC": "OFF", "BONDS": "0"}
+        self.actuators = {
+            index: profile
+            for index, profile in config.actuators.items()
+            if index < self.actuator_count
+        }
         self._actuator_current_ma = {
             index: profile.max_starting_current_ma
-            for index, profile in config.actuators.items()
+            for index, profile in self.actuators.items()
         }
         self._current_updated_at = time.monotonic()
 
@@ -161,6 +188,9 @@ class LansingDeviceSimulator:
             self._receive_byte(value)
 
     def _receive_byte(self, value: int) -> None:
+        if self._fwu_expected_size and len(self._fwu_image) < self._fwu_expected_size:
+            self._receive_firmware_byte(value)
+            return
         if self._stream_mode:
             self._stream_packet.append(value)
             if len(self._stream_packet) == 2:
@@ -170,7 +200,7 @@ class LansingDeviceSimulator:
                     self._log(f"RX: [{actuator}, {output}]")
                 if actuator == 255:
                     self._stream_mode = False
-                elif 0 <= actuator < ACTUATOR_COUNT:
+                elif 0 <= actuator < self.actuator_count:
                     self._set_value(actuator, output)
                 if self._state_changed is not None:
                     self._state_changed(self)
@@ -184,6 +214,38 @@ class LansingDeviceSimulator:
         if len(self._line) > LINE_LIMIT:
             self._line.clear()
             self._write_line("ER:LINE_TOO_LONG")
+
+    def _receive_firmware_byte(self, value: int) -> None:
+        self._fwu_frame.append(value)
+        if len(self._fwu_frame) < 6:
+            return
+        sequence, length = struct.unpack("<IH", self._fwu_frame[:6])
+        if sequence == 0xFFFFFFFF and length == 0:
+            self._clear_firmware_update()
+            self._write_line("OK:FWU_ABORT")
+            return
+        frame_length = 6 + length + 4
+        if len(self._fwu_frame) < frame_length:
+            return
+        frame = bytes(self._fwu_frame[:frame_length])
+        del self._fwu_frame[:frame_length]
+        payload = frame[6:-4]
+        received_crc = struct.unpack("<I", frame[-4:])[0]
+        expected_crc = zlib.crc32(frame[:6] + payload) & 0xFFFFFFFF
+        if sequence != self._fwu_sequence or received_crc != expected_crc:
+            self._clear_firmware_update()
+            self._write_line("ER:FWU,REASON>FRAME")
+            return
+        self._fwu_image.extend(payload)
+        self._fwu_sequence += 1
+        self._write_line(f"OK:SEQ>{sequence},WRITTEN>{len(self._fwu_image)}")
+
+    def _clear_firmware_update(self) -> None:
+        self._fwu_frame.clear()
+        self._fwu_image.clear()
+        self._fwu_expected_size = 0
+        self._fwu_expected_sha256 = ""
+        self._fwu_sequence = 0
 
     def _handle_raw_line(self, raw: bytes) -> None:
         try:
@@ -223,11 +285,11 @@ class LansingDeviceSimulator:
                     "positive": self.manual[index][0],
                     "negative": self.manual[index][1],
                 }
-                for index in self.config.actuators
+                for index in self.actuators
             },
             "actuator_current_ma": {
                 str(index): self._actuator_current_ma[index]
-                for index in self.config.actuators
+                for index in self.actuators
             },
         }
 
@@ -237,7 +299,7 @@ class LansingDeviceSimulator:
         activations = state.get("actuator_activation", {})
         currents = state.get("actuator_current_ma", {})
         now = time.monotonic()
-        for index, profile in self.config.actuators.items():
+        for index, profile in self.actuators.items():
             item = activations.get(str(index), {})
             value = max(0, min(255, int(item.get("value", 0))))
             positive = max(0, min(255, int(item.get("positive", value))))
@@ -255,12 +317,15 @@ class LansingDeviceSimulator:
 
     def _dispatch(self, command: str, params: list[str]) -> str | list[str] | None:
         handlers = {
-            "VER": self._version, "PSU": lambda p: self._switch("PSU", p),
+            "VER": self._version, "CAP": self._capabilities,
+            "PSU": lambda p: self._switch("PSU", p),
             "PSC": lambda p: self._switch("PSC", p), "VLT": self._voltage,
             "CUR": self._current, "ACT": self._actuator, "OUT": self._output,
             "DIA": self._diagnose, "INI": self._initialize, "TIM": self._runtime,
             "RST": self._reset_runtimes, "RBT": self._reboot, "CFG": self._config,
-            "STS": self._status, "STR": self._stream,
+            "STS": self._status, "STR": self._stream, "OUC": self._output_current,
+            "DT0": self._detect_initial, "DT1": self._detect_conditioned,
+            "NET": self._network, "BLT": self._bluetooth, "FWU": self._firmware_update,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -284,7 +349,20 @@ class LansingDeviceSimulator:
         return result if low <= result <= high else None
 
     def _version(self, params: list[str]) -> str:
-        return "ER:VER_PARAM_COUNT" if params else "OK:FW>Lansing,VERSION>0.1,PROTO>0.1"
+        if params:
+            return "ER:VER_PARAM_COUNT"
+        if self.board_type == "rockford":
+            return "OK:FW>Rockford,VERSION>1.0,PROTO>0.9"
+        return "OK:FW>Lansing,VERSION>0.1,PROTO>0.1"
+
+    def _capabilities(self, params: list[str]) -> str:
+        if params:
+            return "ER:CAP_PARAM_COUNT"
+        if self.board_type != "rockford":
+            return "OK:USB>0,BLE>0,WIFI>0,AP>0,ETH>0,TCP>1,TLS>0,NET>0,NET_IF>0,BLT>0,AUTH>0,CTL>0,DET>0,OUC>0,MESH>0,FWU>0,FCR>0"
+        # The TCP simulator models the text protocol. Binary OTA is explicitly
+        # reported unavailable instead of pretending an image was installed.
+        return "OK:USB>0,BLE>1,WIFI>1,AP>1,ETH>0,TCP>1,TLS>0,NET>1,NET_IF>1,BLT>1,AUTH>0,CTL>0,DET>1,OUC>1,MESH>0,FWU>1,FCR>1"
 
     def _switch(self, kind: str, params: list[str]) -> str:
         if len(params) > 1:
@@ -322,7 +400,7 @@ class LansingDeviceSimulator:
         if self.psu:
             value += self._random.gauss(0, self.config.psu_base_current_noise_ma)
         for index, outputs in enumerate(self.manual):
-            profile = self.config.actuators.get(index)
+            profile = self.actuators.get(index)
             positive, negative = outputs
             activation = max(positive, negative)
             if self.psu and profile and activation:
@@ -341,7 +419,7 @@ class LansingDeviceSimulator:
         self._current_updated_at = now
         if not elapsed_s:
             return
-        for index, profile in self.config.actuators.items():
+        for index, profile in self.actuators.items():
             # Only positive/forward drive improves the actuator. The negative
             # electrode is the firmware's discharge path and counts as offline
             # recovery even though it can draw discharge current.
@@ -349,7 +427,7 @@ class LansingDeviceSimulator:
             self._evolve_actuator_current(index, activation / 255.0, elapsed_s)
 
     def _evolve_actuator_current(self, index: int, activation: float, elapsed_s: float) -> None:
-        profile = self.config.actuators.get(index)
+        profile = self.actuators.get(index)
         if profile is None or elapsed_s <= 0:
             return
         current = self._actuator_current_ma[index]
@@ -375,7 +453,7 @@ class LansingDeviceSimulator:
         if self._log is not None:
             actuator_values = ";".join(
                 f"A{index}->{self._actuator_current_ma[index]:.3f}"
-                for index in sorted(self.config.actuators)
+                for index in sorted(self.actuators)
             )
             self._log(f"LOG: {actuator_values}")
         return f"OK:{value:.3f}"
@@ -385,7 +463,7 @@ class LansingDeviceSimulator:
             return "ER:ACT_PARAM_COUNT"
         if not params:
             return "OK:" + ",".join(map(str, self.values))
-        actuator = self._parse_int(params[0], 0, ACTUATOR_COUNT - 1)
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
         if actuator is None:
             return "ER:ACT_ACTUATOR"
         if len(params) == 1:
@@ -418,7 +496,7 @@ class LansingDeviceSimulator:
         if not params:
             fields = ",".join(f"A{i}P>{p},A{i}N>{n}" for i, (p, n) in enumerate(self.manual))
             return f"OK:{fields}"
-        actuator = self._parse_int(params[0], 0, ACTUATOR_COUNT - 1)
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
         if actuator is None:
             return "ER:OUT_ACTUATOR"
         if len(params) == 1:
@@ -439,10 +517,80 @@ class LansingDeviceSimulator:
         self.manual[actuator] = (positive, negative)
         return "OK:OUT"
 
+    def _output_current(self, params: list[str]) -> str:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>OUC"
+        if len(params) != 4:
+            return "ER:OUC_PARAM_COUNT"
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
+        top = self._parse_int(params[1], 0, 255)
+        bottom = self._parse_int(params[2], 0, 1)
+        measurement_ms = self._parse_int(params[3], 1, 2**31 - 1)
+        if actuator is None:
+            return "ER:OUC_ACTUATOR"
+        if top is None:
+            return "ER:OUC_TOP_VALUE"
+        if bottom is None:
+            return "ER:OUC_BOTTOM_VALUE"
+        if measurement_ms is None:
+            return "ER:OUC_TIME_VALUE"
+        if self.safe:
+            return "ER:OUC_SAFETY_ON"
+        self.values[actuator] = 0
+        self.manual[actuator] = (top, 255 if bottom else 0)
+        self._update_actuator_currents()
+        return f"OK:CUR>{self._current_value():.3f},TIME>{measurement_ms}"
+
+    def _detection_line(self, actuator: int, *, conditioned: bool) -> str:
+        base = self.config.psu_base_current_ma
+        profile = self.actuators.get(actuator)
+        delta = 0.0 if profile is None else self._actuator_current_ma[actuator]
+        forward = base + delta
+        threshold = 3.0 if conditioned else 10.0
+        state = "NOT_CONNECTED" if delta < 0.1 else ("ERROR" if delta > threshold else ("READY" if conditioned else "PRESENT"))
+        return f"OK:ACT>{actuator},BASE>{base:.3f},FWD>{forward:.3f},DELTA>{delta:.3f},STATE>{state}"
+
+    def _detect_initial(self, params: list[str]) -> str | list[str]:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>DT0"
+        if len(params) > 1:
+            return "ER:DT0_PARAM_COUNT"
+        if not self.psu:
+            return "ER:DT0_PSU_OFF"
+        if not self.psc:
+            return "ER:DT0_PSU_DISCONNECTED"
+        base = self.config.psu_base_current_ma
+        self._detection_baseline_ma = base
+        if params:
+            actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
+            if actuator is None:
+                return "ER:DT0_ACTUATOR"
+            self._detected_present[actuator] = actuator in self.actuators
+            return self._detection_line(actuator, conditioned=False)
+        lines = [f"OK:BASE>{base:.3f}"]
+        for actuator in range(self.actuator_count):
+            self._detected_present[actuator] = actuator in self.actuators
+            lines.append(self._detection_line(actuator, conditioned=False))
+        return lines
+
+    def _detect_conditioned(self, params: list[str]) -> str:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>DT1"
+        if len(params) != 1:
+            return "ER:DT1_PARAM_COUNT"
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
+        if actuator is None:
+            return "ER:DT1_ACTUATOR"
+        if self._detection_baseline_ma is None:
+            return "ER:DT1_NO_BASELINE"
+        if not self._detected_present[actuator]:
+            return "ER:DT1_NOT_PRESENT"
+        return self._detection_line(actuator, conditioned=True)
+
     def _diagnose(self, params: list[str]) -> str:
         if len(params) != 1:
             return "ER:DIA_PARAM_COUNT"
-        actuator = self._parse_int(params[0], 0, ACTUATOR_COUNT - 1)
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
         if actuator is None:
             return "ER:DIA_ACTUATOR"
         if not self.psu:
@@ -458,7 +606,7 @@ class LansingDeviceSimulator:
         self._evolve_actuator_current(actuator, 1.0, 1.0)
         self._evolve_actuator_current(actuator, 0.0, max(0.0, self.diagnosis_delay_s - 1.0))
         base = self.config.psu_base_current_ma
-        profile = self.config.actuators.get(actuator)
+        profile = self.actuators.get(actuator)
         actuator_current = self._actuator_current_ma.get(actuator, 0.0)
         forward = base if profile is None else base + actuator_current
         discharge = base if profile is None else base + profile.min_running_current_ma
@@ -467,7 +615,7 @@ class LansingDeviceSimulator:
     def _initialize(self, params: list[str]) -> str:
         if len(params) != 1:
             return "ER:INI_PARAM_COUNT"
-        actuator = self._parse_int(params[0], 0, ACTUATOR_COUNT - 1)
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
         if actuator is None:
             return "ER:INI_ACTUATOR"
         if not self.psu:
@@ -487,13 +635,13 @@ class LansingDeviceSimulator:
             return "ER:TIM_PARAM_COUNT"
         if not params:
             return "OK:" + ",".join(map(str, self.total_ms))
-        actuator = self._parse_int(params[0], 0, ACTUATOR_COUNT - 1)
+        actuator = self._parse_int(params[0], 0, self.actuator_count - 1)
         return "ER:TIM_ACTUATOR" if actuator is None else f"OK:{actuator},{self.total_ms[actuator]}"
 
     def _reset_runtimes(self, params: list[str]) -> str:
         if params:
             return "ER:RST_PARAM_COUNT"
-        self.total_ms = [0] * ACTUATOR_COUNT
+        self.total_ms = [0] * self.actuator_count
         return "OK:RST"
 
     def _reboot(self, params: list[str]) -> str:
@@ -504,12 +652,14 @@ class LansingDeviceSimulator:
         self._stream_mode = False
         self._stream_packet.clear()
         self._line.clear()
-        self.values = [0] * ACTUATOR_COUNT
-        self.manual = [(0, 0)] * ACTUATOR_COUNT
-        self._active_since = [None] * ACTUATOR_COUNT
+        self.values = [0] * self.actuator_count
+        self.manual = [(0, 0)] * self.actuator_count
+        self._active_since = [None] * self.actuator_count
         return "OK:RBT"
 
     def _config(self, params: list[str]) -> str:
+        if self.board_type == "rockford" and params and params[0].upper() == "FACTORY_RESET":
+            return "ER:CFG_FACTORY_RESET_LOCAL_ONLY"
         if len(params) not in {1, 2}:
             return "ER:CFG_PARAM_COUNT"
         key = params[0].upper()
@@ -544,8 +694,113 @@ class LansingDeviceSimulator:
             "OK:ACT_STATES>" + ",".join(map(str, states)),
             "OK:ACTIVE_MS>" + ",".join(map(str, active_ms)),
             "OK:TOTAL_MS>" + ",".join(map(str, self.total_ms)),
-            "OK:DISCHARGE_MS_LEFT>" + ",".join("0" for _ in range(ACTUATOR_COUNT)),
+            "OK:DISCHARGE_MS_LEFT>" + ",".join("0" for _ in range(self.actuator_count)),
         ]
+
+    def _network(self, params: list[str]) -> str:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>NET"
+        if not params or params == ["STATUS"]:
+            fields = dict(self.network)
+            fields.update({"IF": "WIFI", "STATE": "CONNECTED" if fields["MODE"] == "CLIENT" else "AP_ACTIVE"})
+            return "OK:" + ",".join(f"{key}>{value}" for key, value in fields.items())
+        upper = [item.upper() for item in params]
+        if upper == ["IF", "LIST"]:
+            return "OK:IFACES>WIFI,CONFIG>IP|HOST|TCP|AUTH|TLS"
+        if upper[:2] == ["IF", "WIFI"]:
+            return self._network(params[2:])
+        if upper[0] == "MODE":
+            if len(upper) == 1:
+                return f"OK:MODE>{self.network['MODE']}"
+            mode = "ACCESS_POINT" if upper[1] in {"AP", "ACCESS_POINT"} else upper[1]
+            if mode not in {"CLIENT", "ACCESS_POINT"}:
+                return "ER:NET_MODE_VALUE"
+            self.network["MODE"] = mode
+            return f"OK:MODE>{mode}"
+        if upper[:2] == ["IP", "DHCP"]:
+            self.network["DHCP"] = "ON"
+            return "OK:DHCP>ON"
+        if len(params) == 7 and upper[:2] == ["IP", "STATIC"]:
+            self.network.update(dict(zip(("IP", "SUBNET", "GATEWAY", "DNS1", "DNS2"), params[2:7])))
+            self.network["DHCP"] = "OFF"
+            return "OK:DHCP>OFF,IP>" + self.network["IP"]
+        if upper[0] == "HOST":
+            if len(params) == 2:
+                self.network["HOST"] = params[1]
+            return f"OK:HOST>{self.network['HOST']}"
+        if upper[0] == "TCP":
+            if len(upper) == 2 and upper[1] in {"ON", "OFF"}:
+                self.network["TCP"] = upper[1]
+            elif len(upper) == 3 and upper[1] == "PORT":
+                self.network["PORT"] = params[2]
+            return f"OK:ENABLED>{self.network['TCP']},PORT>{self.network['PORT']},BIND>{self.network['BIND']}"
+        if upper[:2] == ["AP", "STATUS"]:
+            return f"OK:SSID64>RlItUm9ja2ZvcmQtU2lt,SEC>OPEN,CH>1,IP>{self.network['IP']},SUBNET>{self.network['SUBNET']},DHCP_SERVER>ON"
+        if len(params) >= 5 and upper[:2] == ["AP", "CONFIG"]:
+            return "OK:AP>CONFIGURED"
+        if len(params) == 4 and upper[:2] == ["AP", "IP"]:
+            self.network["IP"], self.network["SUBNET"] = params[2:4]
+            return f"OK:IP>{self.network['IP']},SUBNET>{self.network['SUBNET']}"
+        if upper == ["SCAN"]:
+            return "OK:STATE>COMPLETE,COUNT>0"
+        if upper == ["LIST"]:
+            return "OK:STATE>COMPLETE,COUNT>0"
+        if upper[0] == "TLS":
+            return "OK:ENABLED>OFF,CERT>NONE,KEY>NONE"
+        if upper[0] == "KEY":
+            return "OK:TOKEN>simulator-token"
+        if upper == ["DIAG"]:
+            return f"OK:IF>WIFI,MODE>{self.network['MODE']},IP>{self.network['IP']},TCP>{self.network['TCP']}"
+        return "ER:NET_PARAM_VALUE"
+
+    def _bluetooth(self, params: list[str]) -> str:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>BLT"
+        upper = [item.upper() for item in params]
+        if not params or upper == ["STATUS"]:
+            return "OK:" + ",".join(f"{key}>{value}" for key, value in self.bluetooth.items())
+        if upper in (["ON"], ["OFF"]):
+            self.bluetooth["ENABLED"] = upper[0]
+        elif len(params) == 2 and upper[0] == "NAME":
+            self.bluetooth["NAME"] = "FR-" + params[1]
+        elif len(params) == 2 and upper[0] == "SEC" and upper[1] in {"ON", "OFF"}:
+            self.bluetooth["SEC"] = upper[1]
+        elif upper == ["BONDS", "CLEAR"]:
+            self.bluetooth["BONDS"] = "0"
+        else:
+            return "ER:BLT_PARAM_VALUE"
+        return "OK:" + ",".join(f"{key}>{value}" for key, value in self.bluetooth.items())
+
+    def _firmware_update(self, params: list[str]) -> str:
+        if self.board_type != "rockford":
+            return "ER:UNKNOWN_COMMAND>FWU"
+        upper = [item.upper() for item in params]
+        if len(params) == 3 and upper[0] == "BEGIN":
+            try:
+                size = int(params[1])
+            except ValueError:
+                return "ER:FWU,REASON>SIZE"
+            digest = params[2].lower()
+            if size <= 0 or len(digest) != 64:
+                return "ER:FWU,REASON>BEGIN"
+            self._clear_firmware_update()
+            self._fwu_expected_size = size
+            self._fwu_expected_sha256 = digest
+            return "OK:STATE>READY,FRAME>1024"
+        if upper == ["END"]:
+            if len(self._fwu_image) != self._fwu_expected_size:
+                return "ER:FWU,REASON>SIZE"
+            digest = hashlib.sha256(self._fwu_image).hexdigest()
+            if digest != self._fwu_expected_sha256:
+                self._clear_firmware_update()
+                return "ER:FWU,REASON>SHA256"
+            size = len(self._fwu_image)
+            self._clear_firmware_update()
+            return f"OK:STATE>VERIFIED,SIZE>{size},SHA256>{digest},REBOOT>YES"
+        if upper == ["ABORT"]:
+            self._clear_firmware_update()
+            return "OK:FWU_ABORT"
+        return "ER:FWU,REASON>PARAMS"
 
     def _stream(self, params: list[str]) -> str:
         if params:
@@ -573,11 +828,12 @@ class LansingTcpServer:
         config: SimulatorConfig,
         *,
         host: str = "127.0.0.1",
-        port: int = 8765,
+        port: int = 49765,
         response_delay_s: float = 0.0,
         diagnosis_delay_s: float = DEFAULT_DIAGNOSIS_DELAY_S,
         log: Callable[[str], None] | None = None,
         state_path: Path | None = None,
+        board_type: str = "lansing",
     ) -> None:
         self.config = config
         self.host = host
@@ -586,6 +842,7 @@ class LansingTcpServer:
         self.diagnosis_delay_s = diagnosis_delay_s
         self.log = log
         self.state_path = state_path
+        self.board_type = board_type
         self._runtime_state = self._load_runtime_state()
         self.last_engine: LansingDeviceSimulator | None = None
         self._server: TcpDeviceListener | None = None
@@ -656,6 +913,7 @@ class LansingTcpServer:
                     diagnosis_delay_s=self.diagnosis_delay_s,
                     log=self.log,
                     state_changed=self._checkpoint_engine,
+                    board_type=self.board_type,
                 )
                 engine.restore(self._runtime_state)
                 self.last_engine = engine
@@ -706,10 +964,24 @@ def print_connection_instructions(endpoint: str) -> None:
     print("WARNING: This raw TCP protocol is not authenticated or encrypted.")
 
 
-def run_tcp_simulator(config_path: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None:
+def run_tcp_simulator(
+    config_path: Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 49765,
+    board_type: str | None = None,
+) -> None:
     config = SimulatorConfig.load(config_path)
-    with LansingTcpServer(config, host=host, port=port, log=print, state_path=config_path) as server:
-        print(f"Lansing simulator: {config.name}")
+    if board_type is None:
+        design = json.loads(config_path.read_text(encoding="utf-8"))
+        board_type = str(design.get("board_type", "lansing")).lower()
+    if board_type not in {"lansing", "rockford"}:
+        raise ValueError("Saved board_type must be 'lansing' or 'rockford'")
+    with LansingTcpServer(
+        config, host=host, port=port, log=print, state_path=config_path,
+        board_type=board_type,
+    ) as server:
+        print(f"{board_type.title()} simulator: {config.name}")
         print_connection_instructions(server.endpoint)
         if host not in {"127.0.0.1", "localhost"}:
             print("WARNING: Non-loopback binding exposes the unauthenticated protocol to the network.")
@@ -721,13 +993,18 @@ def run_tcp_simulator(config_path: Path, *, host: str = "127.0.0.1", port: int =
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run a Lansing device over its raw TCP byte stream")
+    parser = argparse.ArgumentParser(description="Run a Fluid Reality device over its raw TCP byte stream")
     parser.add_argument("config", type=Path, help="Single-file Lansing board JSON")
+    parser.add_argument(
+        "--board",
+        choices=("lansing", "rockford"),
+        help="Firmware profile to simulate (default: value saved in the design)",
+    )
     parser.add_argument(
         "--tcp",
         metavar="HOST:PORT",
-        default="127.0.0.1:8765",
-        help="Raw TCP listen address (default: 127.0.0.1:8765)",
+        default="127.0.0.1:49765",
+        help="Raw TCP listen address (default: 127.0.0.1:49765)",
     )
     args = parser.parse_args()
     try:
@@ -737,7 +1014,7 @@ def main() -> int:
             raise ValueError("port must be 0..65535")
     except ValueError as exc:
         parser.error(f"--tcp must be HOST:PORT: {exc}")
-    run_tcp_simulator(args.config, host=host, port=port)
+    run_tcp_simulator(args.config, host=host, port=port, board_type=args.board)
     return 0
 
 

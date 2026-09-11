@@ -197,6 +197,8 @@ class DeviceBridge:
         tls_ca_file: str | None = None,
         tls_fingerprint: str | None = None,
         tls_server_hostname: str | None = None,
+        tls_check_hostname: bool = True,
+        tls_verify_certificate: bool = True,
     ) -> DeviceBridgeBoard:
         """Open an SDK board proxy through this running TCP/TLS bridge."""
 
@@ -210,6 +212,8 @@ class DeviceBridge:
             tls_ca_file=tls_ca_file,
             tls_fingerprint=tls_fingerprint,
             tls_server_hostname=tls_server_hostname,
+            tls_check_hostname=tls_check_hostname,
+            tls_verify_certificate=tls_verify_certificate,
         )
 
     def _status(self, message: str) -> None:

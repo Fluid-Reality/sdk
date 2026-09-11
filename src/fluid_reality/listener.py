@@ -70,7 +70,7 @@ class TcpDeviceListener:
     def __init__(
         self,
         host: str = "127.0.0.1",
-        port: int = 8765,
+        port: int = 49765,
         *,
         backlog: int = 1,
         tls_certfile: str | None = None,

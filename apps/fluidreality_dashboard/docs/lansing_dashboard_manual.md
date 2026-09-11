@@ -16,13 +16,13 @@ The dashboard lists physical serial ports together with aliases configured by
 the SDK. Set the variable before launching the dashboard:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 ```
 
 On macOS/Linux:
 
 ```bash
-export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:8765"
+export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:49765"
 ```
 
 Multiple mappings are separated by semicolons. Only a selected mapped alias is

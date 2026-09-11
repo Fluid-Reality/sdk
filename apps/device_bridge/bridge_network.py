@@ -67,7 +67,7 @@ def available_host_interfaces() -> tuple[HostInterface, ...]:
 class BridgeNetworkSettings:
     schema_version: int = 2
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = 49765
     tcp_enabled: bool = True
     hostname: str = "fluidreality-bridge"
     bind_interface: str = "HOST"

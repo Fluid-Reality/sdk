@@ -19,9 +19,14 @@ from typing import Callable, Iterable
 
 from fluid_reality import (
     ActuatorState,
+    BluetoothBoard,
+    Board,
+    ConfigurableNetworkBoard,
     FirmwareError,
     FluidRealityError,
     Lansing,
+    Rockford,
+    WifiBoard,
     is_virtual_port,
     list_ports,
 )
@@ -33,13 +38,23 @@ DISCONNECTED_PROMPT = "lansing(disconnected)> "
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Interactive terminal controller for the Fluid Reality Lansing board.",
+        description="Interactive terminal controller for Fluid Reality boards.",
+    )
+    parser.add_argument(
+        "--board",
+        choices=("lansing", "rockford"),
+        default="lansing",
+        help="Board profile to use (default: lansing).",
+    )
+    parser.add_argument(
+        "--access-token",
+        help="Access token for an authenticated TCP/TLS connection.",
     )
     parser.add_argument(
         "--port",
         help=(
             "Board endpoint to connect on startup, for example COM4, "
-            "/dev/ttyACM0, tcp://127.0.0.1:8765, tls://board.local:8765, "
+            "/dev/ttyACM0, tcp://127.0.0.1:49765, tls://board.local:49765, "
             "or ble://DEVICE-ID."
         ),
     )
@@ -59,7 +74,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-c",
         "--command",
         help=(
-            "Run semicolon-separated Lansing terminal commands and exit. "
+            "Run semicolon-separated terminal commands and exit. "
             "Example: -c \"connect COM4; status; psu on\""
         ),
     )
@@ -255,19 +270,31 @@ class SquareWaveRunner:
 
 
 class LansingTerminal(cmd.Cmd):
-    intro = "Fluid Reality Lansing terminal. Type 'help' for commands."
+    intro = "Fluid Reality board terminal. Type 'help' for commands."
     prompt = DISCONNECTED_PROMPT
     ruler = "-"
 
-    def __init__(self, *, verbose: bool = False, json_output: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        board_type: str = "lansing",
+        access_token: str | None = None,
+        verbose: bool = False,
+        json_output: bool = False,
+    ) -> None:
         super().__init__()
-        self.board: Lansing | None = None
+        self.board_class: type[Board] = Rockford if board_type == "rockford" else Lansing
+        self._prompt_name = board_type
+        self.access_token = access_token
+        self.board: Board | None = None
         self.connected_port: str | None = None
         self.verbose = verbose
         self.json_output = json_output
         if json_output:
             self.intro = None
             self.prompt = ""
+        else:
+            self.prompt = f"{self._prompt_name}(disconnected)> "
         self.log_lines: list[str] = []
         self.error_count = 0
         self._lock = threading.RLock()
@@ -284,7 +311,11 @@ class LansingTerminal(cmd.Cmd):
 
     def postcmd(self, stop: bool, line: str) -> bool:
         if not self.json_output:
-            self.prompt = PROMPT if self.board is not None else DISCONNECTED_PROMPT
+            self.prompt = (
+                f"{self._prompt_name}> "
+                if self.board is not None
+                else f"{self._prompt_name}(disconnected)> "
+            )
         return stop
 
     def onecmd(self, line: str) -> bool:
@@ -348,7 +379,7 @@ class LansingTerminal(cmd.Cmd):
         self.square.stop()
         self._close_board()
         port = parts[0]
-        board = Lansing(port)
+        board = self.board_class(port, network_token=self.access_token)
         with self._lock:
             try:
                 board.set_debug_out(self._debug)
@@ -361,6 +392,148 @@ class LansingTerminal(cmd.Cmd):
         self.connected_port = port
         self._log(f"Connected to {version.firmware} firmware {version.version} on {port}.")
         self.do_status("")
+
+    def do_capabilities(self, arg: str) -> None:
+        """Show firmware capability flags."""
+
+        if arg.strip():
+            raise ValueError("Usage: capabilities")
+        with self._lock:
+            fields = self._require_board().capabilities()
+        if self.json_output:
+            self._emit("", event="capabilities", capabilities=fields)
+        else:
+            for key, value in sorted(fields.items()):
+                print(f"{key}: {value}")
+
+    def do_network(self, arg: str) -> None:
+        """network status [interface] | interfaces | diagnostics [interface]
+        network hostname [name] | dhcp [interface]
+        network static <address> <subnet> <gateway> <dns1> [dns2] [interface]
+        network tcp [on|off] [port] | mode [client|ap]
+
+        Inspect or configure Rockford networking.
+        """
+
+        parts = shlex.split(arg)
+        board = self._require_capability(ConfigurableNetworkBoard, "network configuration")
+        if not parts or parts[0] == "status":
+            interface = parts[1] if len(parts) == 2 else None
+            if len(parts) > 2:
+                raise ValueError("Usage: network status [interface]")
+            fields = board.network_status(interface)
+        elif parts == ["interfaces"]:
+            values = board.network_interfaces()
+            fields = {"INTERFACES": "|".join(values)}
+        elif parts[0] == "diagnostics" and len(parts) <= 2:
+            fields = board.network_diagnostics(parts[1] if len(parts) == 2 else None)
+        elif parts[0] == "hostname" and len(parts) <= 2:
+            fields = board.network_hostname(parts[1] if len(parts) == 2 else None)
+        elif parts[0] == "dhcp" and len(parts) <= 2:
+            fields = board.use_dhcp(parts[1] if len(parts) == 2 else None)
+        elif parts[0] == "static" and 5 <= len(parts) <= 7:
+            address, subnet, gateway, dns1 = parts[1:5]
+            dns2 = parts[5] if len(parts) >= 6 else "0.0.0.0"
+            interface = parts[6] if len(parts) == 7 else None
+            fields = board.set_static_ipv4(
+                address, subnet, gateway, dns1, dns2, interface=interface
+            )
+        elif parts[0] == "tcp" and len(parts) <= 3:
+            enabled = None if len(parts) < 2 else bool_arg(parts[1])
+            port = None if len(parts) < 3 else int(parts[2])
+            fields = board.configure_tcp(enabled=enabled, port=port)
+        elif parts[0] == "mode" and len(parts) <= 2:
+            wifi = self._require_capability(WifiBoard, "Wi-Fi")
+            if len(parts) == 1:
+                fields = {"MODE": wifi.wifi_mode()}
+            else:
+                fields = wifi.set_wifi_mode(parts[1])
+        else:
+            raise ValueError("Invalid network command; run 'help network'.")
+        self._emit_fields("network", fields)
+
+    def do_bluetooth(self, arg: str) -> None:
+        """bluetooth status | on | off | name <suffix>
+        bluetooth security <on|off> | clear-bonds
+
+        Inspect or configure Rockford Bluetooth. The advertised name always
+        begins with FR-; the name command accepts only the suffix.
+        """
+
+        parts = shlex.split(arg)
+        board = self._require_capability(BluetoothBoard, "Bluetooth configuration")
+        if not parts or parts == ["status"]:
+            fields = board.bluetooth_status()
+        elif parts in (["on"], ["off"]):
+            fields = board.set_bluetooth_enabled(parts[0] == "on")
+        elif len(parts) == 2 and parts[0] == "name":
+            fields = board.set_bluetooth_name(parts[1])
+        elif len(parts) == 2 and parts[0] == "security":
+            fields = board.set_bluetooth_security(bool_arg(parts[1]))
+        elif parts == ["clear-bonds"]:
+            fields = board.clear_bluetooth_bonds()
+        else:
+            raise ValueError("Invalid bluetooth command; run 'help bluetooth'.")
+        self._emit_fields("bluetooth", fields)
+
+    def do_firmware_update(self, arg: str) -> None:
+        """firmware_update <image.bin>
+
+        Install firmware over USB serial, TCP, or TLS. Bluetooth is unsupported.
+        """
+
+        parts = shlex.split(arg)
+        if len(parts) != 1:
+            raise ValueError("Usage: firmware_update <image.bin>")
+
+        def progress(written: int, total: int) -> None:
+            percent = 100.0 * written / total
+            if self.json_output:
+                self._emit("", event="firmware_update_progress", written=written, total=total)
+            else:
+                print(f"\rFirmware update: {percent:5.1f}%", end="", flush=True)
+
+        with self._lock:
+            result = self._require_board().update_firmware(parts[0], progress=progress)
+        if not self.json_output:
+            print()
+        self._emit(
+            f"Firmware verified ({result.size:,} bytes, SHA-256 {result.sha256}).",
+            event="firmware_update_complete",
+            size=result.size,
+            sha256=result.sha256,
+            path=str(result.path),
+        )
+
+    def do_factory_reset(self, arg: str) -> None:
+        """factory_reset FACTORY_RESET
+
+        Permanently erase board configuration, reboot, and reconnect. This is
+        deliberately available only on a direct USB serial connection.
+        """
+
+        if shlex.split(arg) != ["FACTORY_RESET"]:
+            raise ValueError("Usage: factory_reset FACTORY_RESET")
+        board = self._require_board()
+        if not isinstance(board, Rockford):
+            raise RuntimeError("Factory reset is not supported by this board profile.")
+        port = self.connected_port or ""
+        if is_virtual_port(port):
+            raise RuntimeError("Factory reset is available only over direct USB serial.")
+        with self._lock:
+            board.factory_reset()
+        self._close_board()
+        self._emit("Factory reset sent; waiting for the board to restart.", event="factory_reset")
+        deadline = time.monotonic() + 15.0
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            time.sleep(1.0)
+            try:
+                self.do_connect(shlex.quote(port))
+                return
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"Factory reset completed, but reconnection failed: {last_error}")
 
     def do_disconnect(self, arg: str) -> None:
         """Disconnect from the board and stop any running square wave."""
@@ -531,7 +704,7 @@ class LansingTerminal(cmd.Cmd):
 
         parts = shlex.split(arg)
         if not parts:
-            for actuator in range(0, 8):
+            for actuator in range(self._require_board().actuator_count):
                 self._detect_one(actuator)
             return
         if len(parts) == 1:
@@ -540,9 +713,10 @@ class LansingTerminal(cmd.Cmd):
             return
         if len(parts) == 2 and parts[0] == "group":
             group = int(parts[1])
-            if not 0 <= group <= 2:
-                raise ValueError("group must be 0, 1, or 2")
-            for actuator in range(group * 8, group * 8 + 8):
+            group_count = (self._require_board().actuator_count + 7) // 8
+            if not 0 <= group < group_count:
+                raise ValueError(f"group must be between 0 and {group_count - 1}")
+            for actuator in range(group * 8, min(group * 8 + 8, self._require_board().actuator_count)):
                 self._detect_one(actuator)
             return
         raise ValueError("Usage: detect [<actuator>|group <0|1|2>]")
@@ -672,23 +846,28 @@ class LansingTerminal(cmd.Cmd):
                 output_value = self._voltage_to_output_allow_zero(drive_voltage, supply_voltage)
                 with self._lock:
                     board = self._require_board()
-                    board.set_manual_output(actuator, 0, 0)
-                time.sleep(0.05)
-                with self._lock:
-                    baseline_ma = self._require_board().current()
-
-                with self._lock:
-                    self._require_board().set_manual_output(actuator, output_value, 0)
-                time.sleep(0.5)
-                with self._lock:
-                    forward_ma = self._require_board().current()
+                    if board.direct_top_bottom_output:
+                        baseline_ma = board.manual_output_current(actuator, 0, 0, 50)
+                        forward_ma = board.manual_output_current(actuator, output_value, 0, 500)
+                    else:
+                        board.set_manual_output(actuator, 0, 0)
+                        time.sleep(0.05)
+                        baseline_ma = board.current()
+                        board.set_manual_output(actuator, output_value, 0)
+                        time.sleep(0.5)
+                        forward_ma = board.current()
                 delta_ma = abs(forward_ma - baseline_ma)
 
                 with self._lock:
-                    self._require_board().set_manual_output(actuator, 0, output_value)
-                time.sleep(0.5)
-                with self._lock:
-                    reverse_ma = self._require_board().current()
+                    board = self._require_board()
+                    if board.direct_top_bottom_output:
+                        reverse_ma = board.manual_output_current(
+                            actuator, board.max_output - output_value, 1, 500
+                        )
+                    else:
+                        board.set_manual_output(actuator, 0, output_value)
+                        time.sleep(0.5)
+                        reverse_ma = board.current()
 
                 error_ma = abs(delta_ma - target_delta_ma)
                 step_v = self._fast_init_step_v(error_ma)
@@ -741,7 +920,10 @@ class LansingTerminal(cmd.Cmd):
             with self._lock:
                 board = self._require_board()
                 try:
-                    board.set_manual_output(actuator, 0, 0)
+                    if board.direct_top_bottom_output:
+                        board.manual_output_current(actuator, 0, 0, 1)
+                    else:
+                        board.set_manual_output(actuator, 0, 0)
                 finally:
                     board.safety(previous_safety)
 
@@ -837,13 +1019,25 @@ class LansingTerminal(cmd.Cmd):
                 with self._lock:
                     board = self._require_board()
                     if now >= next_phase:
-                        if phase % 2 == 0:
-                            board.set_manual_output(actuator, output_value, 0)
+                        if board.direct_top_bottom_output:
+                            if phase % 2 == 0:
+                                current_ma = board.manual_output_current(
+                                    actuator, output_value, 0, 500
+                                )
+                            else:
+                                current_ma = board.manual_output_current(
+                                    actuator, board.max_output - output_value, 1, 500
+                                )
                         else:
-                            board.set_manual_output(actuator, 0, output_value)
+                            if phase % 2 == 0:
+                                board.set_manual_output(actuator, output_value, 0)
+                            else:
+                                board.set_manual_output(actuator, 0, output_value)
+                            current_ma = board.current()
                         phase += 1
                         next_phase = now + 0.5
-                    current_ma = board.current()
+                    else:
+                        current_ma = board.current()
                 samples.append(current_ma)
                 delta_ma = abs(current_ma - baseline_ma)
                 whole_second = int(elapsed)
@@ -865,7 +1059,10 @@ class LansingTerminal(cmd.Cmd):
             with self._lock:
                 board = self._require_board()
                 try:
-                    board.set_manual_output(actuator, 0, 0)
+                    if board.direct_top_bottom_output:
+                        board.manual_output_current(actuator, 0, 0, 1)
+                    else:
+                        board.set_manual_output(actuator, 0, 0)
                 finally:
                     board.safety(previous_safety)
         recovery_ma = sum(samples) / len(samples) if samples else baseline_ma
@@ -1014,12 +1211,13 @@ class LansingTerminal(cmd.Cmd):
 
         parts = shlex.split(arg)
         if not parts:
-            actuators = range(Lansing.actuator_count)
+            actuators = range(self._require_board().actuator_count)
         elif len(parts) == 2 and parts[0] == "group":
             group = int(parts[1])
-            if not 0 <= group <= 2:
-                raise ValueError("group must be 0, 1, or 2")
-            actuators = range(group * 8, group * 8 + 8)
+            group_count = (self._require_board().actuator_count + 7) // 8
+            if not 0 <= group < group_count:
+                raise ValueError(f"group must be between 0 and {group_count - 1}")
+            actuators = range(group * 8, min(group * 8 + 8, self._require_board().actuator_count))
         else:
             raise ValueError("Usage: states [group <0|1|2>]")
         with self._lock:
@@ -1050,6 +1248,7 @@ class LansingTerminal(cmd.Cmd):
 
     def do_manual(self, arg: str) -> None:
         """manual get <actuator> | manual set <actuator> <positive> <negative>
+        manual measure <actuator> <top> <bottom:0|1> <milliseconds>
 
         Advanced bench control using raw positive/negative manual outputs.
         """
@@ -1080,7 +1279,25 @@ class LansingTerminal(cmd.Cmd):
                     negative=negative,
                 )
                 return
-        raise ValueError("Usage: manual get <actuator> | manual set <actuator> <positive> <negative>")
+            if len(parts) == 5 and parts[0] == "measure":
+                actuator = parse_actuator(parts[1])
+                top = parse_output(parts[2])
+                bottom = int(parts[3])
+                measurement_ms = int(parts[4])
+                current_ma = board.manual_output_current(
+                    actuator, top, bottom, measurement_ms
+                )
+                self._emit(
+                    f"{current_ma:.2f} mA",
+                    event="manual_output_current",
+                    actuator=actuator,
+                    top=top,
+                    bottom=bottom,
+                    measurement_ms=measurement_ms,
+                    current_ma=current_ma,
+                )
+                return
+        raise ValueError("Invalid manual command; run 'help manual'.")
 
     def do_debug(self, arg: str) -> None:
         """debug on|off|file <path>
@@ -1253,10 +1470,23 @@ class LansingTerminal(cmd.Cmd):
             raise ValueError(f"Usage: {usage}")
         return bool_arg(parts[0])
 
-    def _require_board(self) -> Lansing:
+    def _require_board(self) -> Board:
         if self.board is None:
-            raise RuntimeError("Connect to a Lansing board first.")
+            raise RuntimeError("Connect to a board first.")
         return self.board
+
+    def _require_capability(self, capability: type[Board], label: str):
+        board = self._require_board()
+        if not isinstance(board, capability):
+            raise RuntimeError(f"{label} is not supported by this board profile.")
+        return board
+
+    def _emit_fields(self, event: str, fields: dict[str, str]) -> None:
+        if self.json_output:
+            self._emit("", event=event, fields=fields)
+        else:
+            for key, value in fields.items():
+                print(f"{key}: {value}")
 
     def _close_board(self) -> None:
         if self.board is None:
@@ -1319,7 +1549,12 @@ class LansingTerminal(cmd.Cmd):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    shell = LansingTerminal(verbose=args.verbose, json_output=args.json_output)
+    shell = LansingTerminal(
+        board_type=args.board,
+        access_token=args.access_token,
+        verbose=args.verbose,
+        json_output=args.json_output,
+    )
     if args.port:
         shell._run_command(f"connect {shlex.quote(args.port)}")
         if shell.error_count:

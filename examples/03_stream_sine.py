@@ -5,12 +5,19 @@ from __future__ import annotations
 import argparse
 import sys
 
-from fluid_reality import Lansing
+from fluid_reality import ActuatorState
+
+from _common import (
+    add_connection_arguments,
+    connect_power,
+    open_board,
+    shutdown_power,
+)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("port", help="Serial port, for example COM5")
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_connection_arguments(parser)
     parser.add_argument("--actuator", type=int, default=0)
     parser.add_argument("--duration-s", type=float, default=5.0)
     parser.add_argument("--frequency-hz", type=float, default=1.0)
@@ -43,7 +50,7 @@ def main() -> None:
     def print_value(actuator: int, value: int, elapsed_s: float) -> None:
         print(f"{elapsed_s:.6f}s actuator={actuator} value={value}")
 
-    with Lansing(args.port) as board:
+    with open_board(args) as board:
         if not args.no_sync:
             board.force_text_mode()
         if args.max_active_ms is not None:
@@ -56,27 +63,32 @@ def main() -> None:
                     f"Use --max-active-ms {int(args.duration_s * 1000) + 1000} for this test.",
                     file=sys.stderr,
                 )
-        board.psu_on()
-        board.psc_on()
-        board.enter_stream_mode()
-        completed = False
+        connect_power(board)
         try:
-            rate = board.stream_sine(
-                args.actuator,
-                duration_s=args.duration_s,
-                frequency_hz=args.frequency_hz,
-                update_hz=args.update_hz,
-                minimum=args.minimum,
-                maximum=args.maximum,
-                value_callback=print_value if args.print_values else None,
-            )
-            completed = True
+            state = board.detect(args.actuator)
+            if state is not ActuatorState.READY:
+                raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
+            board.enter_stream_mode()
+            completed = False
+            try:
+                rate = board.stream_sine(
+                    args.actuator,
+                    duration_s=args.duration_s,
+                    frequency_hz=args.frequency_hz,
+                    update_hz=args.update_hz,
+                    minimum=args.minimum,
+                    maximum=args.maximum,
+                    value_callback=print_value if args.print_values else None,
+                )
+                completed = True
+            finally:
+                if not completed:
+                    board.stream_actuator(args.actuator, 0)
+                    if args.print_values:
+                        print_value(args.actuator, 0, args.duration_s)
+                board.exit_stream_mode()
         finally:
-            if not completed:
-                board.stream_actuator(args.actuator, 0)
-                if args.print_values:
-                    print_value(args.actuator, 0, args.duration_s)
-            board.exit_stream_mode()
+            shutdown_power(board)
 
         print(f"achieved refresh rate: {rate:.1f} Hz")
 

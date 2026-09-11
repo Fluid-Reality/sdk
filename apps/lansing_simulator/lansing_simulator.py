@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QProcess, QSettings, Qt, Signal
-from PySide6.QtGui import QFontDatabase, QPixmap, QTextCursor
+from PySide6.QtGui import QFontDatabase, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
     QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
@@ -23,6 +23,7 @@ if str(APPS_ROOT) not in sys.path:
     sys.path.insert(0, str(APPS_ROOT))
 STANDARD_CONFIG_DIR = APP_ROOT / "standard_configs"
 LOGO_PATH = APP_ROOT.parent / "lansing_dashboard" / "assets" / "fluid_reality_logo_transparent.png"
+APP_ICON_PATH = APP_ROOT.parent / "shared" / "assets" / "fluid-reality-icon.png"
 GROUP_COUNT = 3
 ACTUATORS_PER_GROUP = 8
 
@@ -146,7 +147,7 @@ class SimulatorLogWindow(QMainWindow):
 class DesignerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Fluid Reality Lansing Simulator Designer")
+        self.setWindowTitle("Fluid Reality Board Simulator Designer")
         self.resize(1440, 900)
         self.config = BoardConfig()
         self.profiles: dict[str, ActuatorConfig] = {}
@@ -212,7 +213,7 @@ class DesignerWindow(QMainWindow):
         else:
             logo.setText("FLUID REALITY")
         titles = QVBoxLayout()
-        title = QLabel("Lansing Simulator Designer", objectName="AppTitle")
+        title = QLabel("Board Simulator Designer", objectName="AppTitle")
         subtitle = QLabel("Build a software board configuration for hardware-free development.", objectName="AppSubtitle")
         titles.addWidget(title)
         titles.addWidget(subtitle)
@@ -233,6 +234,11 @@ class DesignerWindow(QMainWindow):
         self.board_name.setPlaceholderText("Configuration name")
         self.board_name.setMinimumWidth(240)
         self.board_name.textChanged.connect(self._update_model)
+        self.board_profile = QComboBox()
+        self.board_profile.addItem("Lansing (24 actuators)", "lansing")
+        self.board_profile.addItem("Rockford (8 actuators)", "rockford")
+        self.board_profile.setToolTip("Firmware protocol profile")
+        self.board_profile.currentIndexChanged.connect(self._profile_type_changed)
         new_btn = QPushButton("New")
         new_btn.clicked.connect(self._new)
         open_btn = QPushButton("Open configuration")
@@ -247,6 +253,7 @@ class DesignerWindow(QMainWindow):
         show_log_btn.clicked.connect(self._show_simulator_log)
         layout.addWidget(QLabel("Board"))
         layout.addWidget(self.board_name)
+        layout.addWidget(self.board_profile)
         layout.addStretch()
         layout.addWidget(new_btn)
         layout.addWidget(open_btn)
@@ -545,11 +552,21 @@ class DesignerWindow(QMainWindow):
 
     def _new(self) -> None:
         self.config = BoardConfig()
+        self.board_profile.setCurrentIndex(0)
         self._load_standard_configs()
         self.path = None
         self.group_index = self.actuator_index = 0
         self._load_controls()
         self._dirty = False
+
+    def _profile_type_changed(self, _index: int) -> None:
+        if not self._loading:
+            self._dirty = True
+        is_rockford = self.board_profile.currentData() == "rockford"
+        for index, button in enumerate(self.group_buttons):
+            button.setEnabled(not is_rockford or index == 0)
+        if is_rockford and self.group_index != 0:
+            self._select_group(0)
 
     def _load_standard_configs(self) -> None:
         self.profiles = {}
@@ -662,6 +679,9 @@ class DesignerWindow(QMainWindow):
     def _load_configuration_path(self, path: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         self.path = path.resolve()
+        board_type = str(data.get("board_type", "lansing")).lower()
+        profile_index = self.board_profile.findData(board_type)
+        self.board_profile.setCurrentIndex(max(0, profile_index))
         self.config = self._from_dict(data, self.path.parent)
         self._load_standard_configs()
         for profile_data in data.get("actuator_configurations", []):
@@ -832,7 +852,11 @@ class DesignerWindow(QMainWindow):
         self.simulator_process.setWorkingDirectory(str(APP_ROOT.parent.parent))
         self.simulator_process.start(
             sys.executable,
-            ["-u", str(APP_ROOT / "simulator.py"), str(self.path), "--tcp", "127.0.0.1:8765"],
+            [
+                "-u", str(APP_ROOT / "simulator.py"), str(self.path),
+                "--board", str(self.board_profile.currentData()),
+                "--tcp", "127.0.0.1:49765",
+            ],
         )
 
     def _read_simulator_log(self) -> None:
@@ -897,6 +921,7 @@ class DesignerWindow(QMainWindow):
             payload = {
                 "schema_version": 3,
                 "kind": "lansing-simulator-design",
+                "board_type": str(self.board_profile.currentData()),
                 "name": self.config.name,
                 "psu_voltage_v": self.config.psu_voltage_v,
                 "psu_voltage_noise_v": self.config.psu_voltage_noise_v,
@@ -975,6 +1000,7 @@ QWidget:disabled { color: #8c95a0; }
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     app.setStyle("Fusion")
     font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
     font.setPointSize(10)

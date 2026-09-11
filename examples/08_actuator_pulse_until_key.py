@@ -12,7 +12,9 @@ import argparse
 import sys
 import time
 
-from fluid_reality import ActuatorState, Lansing
+from fluid_reality import ActuatorState, Board
+
+from _common import add_connection_arguments, connect_power, open_board, shutdown_power
 
 
 def key_pressed() -> bool:
@@ -33,7 +35,7 @@ def key_pressed() -> bool:
     return False
 
 
-def wait_for_discharge(board: Lansing, actuator: int, minimum_wait_s: float) -> None:
+def wait_for_discharge(board: Board, actuator: int, minimum_wait_s: float) -> None:
     start = time.perf_counter()
     while True:
         status = board.status()
@@ -45,8 +47,8 @@ def wait_for_discharge(board: Lansing, actuator: int, minimum_wait_s: float) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("port", help="Serial port, for example COM5")
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_connection_arguments(parser)
     parser.add_argument("--actuator", type=int, default=0)
     parser.add_argument("--value", type=int, default=180)
     parser.add_argument("--active-s", type=float, default=1.0)
@@ -55,30 +57,31 @@ def main() -> None:
 
     print("Press any key to stop after the current cycle.")
 
-    with Lansing(args.port) as board:
+    with open_board(args) as board:
         board.force_text_mode()
-        board.psu_on()
-        board.psc_on()
-        state = board.detect(args.actuator)
-        if state is not ActuatorState.READY:
-            raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
+        connect_power(board)
+        try:
+            state = board.detect(args.actuator)
+            if state is not ActuatorState.READY:
+                raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
 
-        cycle = 0
-        while not key_pressed():
-            cycle += 1
-            print(f"cycle {cycle}: ACT {args.actuator} {args.value}")
-            board.set_actuator(args.actuator, args.value)
-            time.sleep(args.active_s)
+            cycle = 0
+            while not key_pressed():
+                cycle += 1
+                print(f"cycle {cycle}: ACT {args.actuator} {args.value}")
+                board.set_actuator(args.actuator, args.value)
+                time.sleep(args.active_s)
 
-            print(f"cycle {cycle}: ACT {args.actuator} 0")
-            board.set_actuator(args.actuator, 0)
+                print(f"cycle {cycle}: ACT {args.actuator} 0")
+                board.set_actuator(args.actuator, 0)
+                wait_for_discharge(board, args.actuator, args.rest_s)
+
+            board.all_actuators_off()
             wait_for_discharge(board, args.actuator, args.rest_s)
-
-        board.all_actuators_off()
-        wait_for_discharge(board, args.actuator, args.rest_s)
-        print("stopped")
+            print("stopped")
+        finally:
+            shutdown_power(board)
 
 
 if __name__ == "__main__":
     main()
-

@@ -89,13 +89,13 @@ Typical examples:
 To expose a raw TCP device simulator under a selectable alias:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 ```
 
 On macOS/Linux:
 
 ```bash
-export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:8765"
+export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:49765"
 ```
 
 Multiple mappings are separated by semicolons. Only the selected mapped alias
@@ -109,23 +109,58 @@ network configuration app:
 from fluid_reality import Rockford
 
 board = Rockford(
-    "tls://10.0.6.143:8765",
+    "tls://10.0.6.143:49765",
     network_token="board-access-token",
     tls_ca_file="rockford-certificate.pem",
     tls_server_hostname="rockford-a172e0",
 )
 
+# A shared certificate can be used across boards without checking its name.
+# The certificate itself is still validated against tls_ca_file.
+board = Rockford(
+    "tls://10.0.6.143:49765",
+    network_token="board-access-token",
+    tls_ca_file="shared-board-certificate.pem",
+    tls_check_hostname=False,
+)
+
 # Certificate pinning is useful for a self-signed device certificate:
 board = Rockford(
-    "tls://10.0.6.143:8765",
+    "tls://10.0.6.143:49765",
     network_token="board-access-token",
     tls_fingerprint="64_HEX_DIGIT_SHA256_FINGERPRINT",
 )
 ```
 
-TLS is verified by default. A TLS connection without a fingerprint uses the
-operating system trust store, plus `tls_ca_file` when supplied. Plain `tcp://`
+TLS certificates and hostnames are verified by default. A TLS connection without
+a fingerprint uses the operating system trust store, plus `tls_ca_file` when
+supplied. Set `tls_check_hostname=False` only to skip matching the certificate name
+to the endpoint; certificate trust and validity are still checked. Plain `tcp://`
 endpoints remain supported for boards whose TLS setting is off.
+
+Wi-Fi-capable boards that report `AP>0` can switch between joining an existing
+network and hosting their own access point:
+
+```python
+from fluid_reality import Rockford
+
+with Rockford("COM7") as board:
+    board.configure_access_point("Rockford Setup", "configure-me", channel=6)
+    board.set_wifi_mode("ACCESS_POINT")
+    print(board.access_point_status())
+
+    # Return to normal client/station operation later.
+    board.set_wifi_mode("CLIENT")
+```
+
+Access-point mode defaults to `192.168.24.1/24`; its address and subnet can be
+changed with `configure_access_point_ipv4()`. The configured TCP or TLS server is
+available on that interface using the board's configured server port.
+
+The desktop connection dialogs intentionally do not request a certificate file.
+They use `tls_verify_certificate=False`, which encrypts traffic but does not
+authenticate the board. SDK integrations should retain certificate verification
+whenever protection against impersonation or active interception is required.
 
 ## Minimal Touch Validation
 
@@ -870,6 +905,15 @@ Common keys:
 - `DIS`: maximum discharge time in milliseconds
 - `SAFE`: manual-output safety, `ON` or `OFF`
 - `DEBUG`: firmware debug output, `ON` or `OFF`
+- `DET_MIN`: minimum current increase that indicates an actuator is present
+- `DT0_ERR`: DT0 initial-stage error threshold
+- `DT1_ERR`: DT1 conditioned-stage error threshold
+
+Rockford also provides `factory_reset()`, which sends the USB-only
+`CFG FACTORY_RESET` command. It safely disables all outputs, erases persistent
+actuator and network configuration (including TLS material, access token,
+Bluetooth settings and bonds), and reboots with firmware defaults. Default
+hardware-derived names and a new access token are generated during startup.
 
 Examples:
 
@@ -904,6 +948,21 @@ print(current_discharge)
 
 board.discharge_time_ms(2000)
 ```
+
+### Detection threshold configuration
+
+Boards reporting a positive `DET` capability expose three persistent thresholds
+in mA:
+
+```python
+board.detection_current_limit_ma(0.20)
+board.dt0_error_threshold_ma(10.0)
+board.dt1_error_threshold_ma(3.0)
+```
+
+Each method reads the current value when called without an argument. The
+detection-current limit must be lower than both error thresholds. Firmware that
+does not report `DET` may reject these configuration keys.
 
 ### `safety(enabled=None) -> bool`
 
@@ -1097,6 +1156,23 @@ finally:
     board.safety(True)
 ```
 
+### `manual_output_current(actuator, top, bottom, measurement_ms) -> float`
+
+Set Rockford's analog TOP value (`0..255`) and digital BOTTOM state (`0|1`),
+measure current over the requested interval, and return the measured current in
+milliamps. The output remains applied after the measurement, so explicitly
+clear it when finished. This requires firmware reporting the `OUC` capability.
+
+```python
+board.safety(False)
+try:
+    current_ma = board.manual_output_current(0, 50, 0, 250)
+    print(f"{current_ma:.2f} mA")
+finally:
+    board.set_manual_output(0, 0, 0)
+    board.safety(True)
+```
+
 ### `get_manual_output(actuator) -> ManualOutput`
 
 Read one actuator's manual output.
@@ -1208,6 +1284,21 @@ print(drained)
 print(board.status())
 ```
 
+### `update_firmware(path, *, progress=None, should_abort=None) -> FirmwareUpdateResult`
+
+Install an ESP32 application image through USB serial or TCP/TLS. The board
+switches its outputs off, writes framed chunks to the inactive OTA slot, and
+checks the complete SHA-256 before rebooting. Bluetooth is not supported for
+firmware transfer.
+
+```python
+result = board.update_firmware(
+    "rockford.bin",
+    progress=lambda written, total: print(f"{written / total:.0%}"),
+)
+print(result.sha256)
+```
+
 ## Low-Level Protocol Utilities
 
 These APIs are useful for diagnostics, test tools, and advanced integrations.
@@ -1273,7 +1364,7 @@ The environment variable contains semicolon-separated `alias=endpoint`
 mappings:
 
 ```text
-COM66=tcp://127.0.0.1:8765;COM67=tcp://127.0.0.1:8766
+COM66=tcp://127.0.0.1:49765;COM67=tcp://127.0.0.1:8766
 ```
 
 Calling `Lansing("COM66")` opens the mapped TCP byte stream. Calling
@@ -1284,7 +1375,7 @@ Calling `Lansing("COM66")` opens the mapped TCP byte stream. Calling
 Return `True` for a configured alias or direct `tcp://` endpoint. This is useful
 when a port picker needs to distinguish physical and simulated devices.
 
-### `TcpDeviceListener(host="127.0.0.1", port=8765, *, backlog=1)`
+### `TcpDeviceListener(host="127.0.0.1", port=49765, *, backlog=1)`
 
 Create a synchronous raw-TCP listener for device simulators. Use `port=0` to
 request an available ephemeral port. The listener performs no decoding,
@@ -1323,7 +1414,7 @@ Both listener and connection are context managers:
 ```python
 from fluid_reality import TcpDeviceListener
 
-with TcpDeviceListener("127.0.0.1", 8765) as listener:
+with TcpDeviceListener("127.0.0.1", 49765) as listener:
     while True:
         with listener.accept() as connection:
             while chunk := connection.read_bytes(4096):

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import html
+import ipaddress
 import queue
+import re
 import secrets
 import sys
 import time
@@ -15,10 +17,13 @@ from urllib.parse import urlsplit
 APP_ROOT = Path(__file__).resolve().parent
 APPS_ROOT = APP_ROOT.parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
+APP_ICON_PATH = APPS_ROOT / "shared" / "assets" / "fluid-reality-icon.png"
+COPY_ICON_PATH = APPS_ROOT / "fluidreality_dashboard" / "assets" / "copy.svg"
+NEW_FILE_ICON_PATH = APPS_ROOT / "shared" / "assets" / "new-file.svg"
 if str(APPS_ROOT) not in sys.path:
     sys.path.insert(0, str(APPS_ROOT))
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QThread, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -63,6 +68,7 @@ from network_config.tls_files import (
     certificate_server_name,
     create_self_signed_tls_files,
 )
+from shared.icon_buttons import configure_refresh_button
 from shared.secret_fields import add_secret_visibility
 from shared.toggle import LabeledToggle
 
@@ -124,13 +130,7 @@ class ConnectionDialog(QDialog):
         layout.setSpacing(14)
         title = QLabel("Connect to a board")
         title.setObjectName("DialogTitle")
-        subtitle = QLabel(
-            "Connect directly over USB, Bluetooth, or the network."
-        )
-        subtitle.setObjectName("DialogSubtitle")
-        subtitle.setWordWrap(True)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
 
         self.connection_tabs = QTabWidget()
         self.connection_tabs.setObjectName("ConnectionTabs")
@@ -166,8 +166,9 @@ class ConnectionDialog(QDialog):
         self.serial_port = QComboBox()
         self.serial_port.setEditable(True)
         self.serial_port.setMinimumWidth(300)
-        self.refresh_ports_button = QPushButton("Refresh ports")
-        self.refresh_ports_button.setObjectName("quietButton")
+        self.refresh_ports_button = configure_refresh_button(
+            QPushButton(), "Refresh serial ports"
+        )
         self.refresh_ports_button.clicked.connect(self.refresh_serial_ports)
         self.serial_port_label = form_label("Serial port")
         row.addWidget(self.serial_port_label)
@@ -182,9 +183,7 @@ class ConnectionDialog(QDialog):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(14, 16, 14, 16)
         layout.setSpacing(12)
-        hint = QLabel(
-            "Use TCP on a trusted network, or TLS with a certificate for encrypted traffic."
-        )
+        hint = QLabel("Use TCP on a trusted network, or TLS for encrypted traffic.")
         hint.setObjectName("ConnectionHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -197,7 +196,7 @@ class ConnectionDialog(QDialog):
         self.network_host.setPlaceholderText("rockford.local or 10.0.6.143")
         self.network_port = QSpinBox()
         self.network_port.setRange(1, 65535)
-        self.network_port.setValue(8765)
+        self.network_port.setValue(49765)
         self.network_token = QLineEdit()
         self.network_token.setPlaceholderText("Optional access token")
         self.network_token_visibility = add_secret_visibility(
@@ -212,30 +211,7 @@ class ConnectionDialog(QDialog):
         form.addRow(self.network_encryption)
         layout.addLayout(form)
 
-        self.tls_options = QFrame()
-        self.tls_options.setObjectName("ConnectionOptions")
-        tls_form = QFormLayout(self.tls_options)
-        tls_form.setContentsMargins(12, 12, 12, 12)
-        certificate_row = QWidget()
-        certificate_layout = QHBoxLayout(certificate_row)
-        certificate_layout.setContentsMargins(0, 0, 0, 0)
-        certificate_layout.setSpacing(7)
-        self.tls_ca_file = QLineEdit()
-        self.tls_ca_file.setPlaceholderText("Board certificate or CA certificate (.pem/.crt)")
-        browse = QPushButton("Browse…")
-        browse.setObjectName("quietButton")
-        browse.clicked.connect(self._choose_certificate)
-        certificate_layout.addWidget(self.tls_ca_file, 1)
-        certificate_layout.addWidget(browse)
-        self.tls_server_hostname = QLineEdit()
-        self.tls_server_hostname.setPlaceholderText(
-            "Optional certificate hostname override"
-        )
-        certificate_label = form_label("Certificate")
-        certificate_name_label = form_label("Certificate name")
-        tls_form.addRow(certificate_label, certificate_row)
-        tls_form.addRow(certificate_name_label, self.tls_server_hostname)
-        layout.addWidget(self.tls_options)
+        layout.addStretch()
         return tab
 
     def _bluetooth_tab(self) -> QWidget:
@@ -253,8 +229,9 @@ class ConnectionDialog(QDialog):
         device_row = QHBoxLayout()
         self.bluetooth_device = QComboBox()
         self.bluetooth_device.setMinimumWidth(300)
-        self.refresh_bluetooth_button = QPushButton("Scan for boards")
-        self.refresh_bluetooth_button.setObjectName("quietButton")
+        self.refresh_bluetooth_button = configure_refresh_button(
+            QPushButton(), "Scan for Bluetooth boards"
+        )
         self.refresh_bluetooth_button.clicked.connect(self.refresh_bluetooth_devices)
         device_row.addWidget(form_label("Board"))
         device_row.addWidget(self.bluetooth_device, 1)
@@ -325,29 +302,7 @@ class ConnectionDialog(QDialog):
         self._bluetooth_scan = None
 
     def _update_protocol(self) -> None:
-        self.tls_options.setVisible(self.network_encryption.isChecked())
         self.adjustSize()
-
-    def _choose_certificate(self) -> None:
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
-            "Select board certificate or certificate authority",
-            "",
-            "Certificate files (*.pem *.crt *.cer);;All files (*)",
-        )
-        if path:
-            self.tls_ca_file.setText(path)
-            self._fill_certificate_name(path)
-
-    def _fill_certificate_name(self, path: str) -> None:
-        if self.tls_server_hostname.text().strip():
-            return
-        try:
-            name = certificate_server_name(path)
-        except Exception:
-            return
-        if name:
-            self.tls_server_hostname.setText(name)
 
     def _show_error(self, message: str) -> None:
         self.error_label.setText(message)
@@ -373,17 +328,7 @@ class ConnectionDialog(QDialog):
             token = self.network_token.text().strip()
             options = {"network_token": token} if token else {}
             if protocol == "tls":
-                certificate = Path(self.tls_ca_file.text().strip())
-                if not certificate.is_file():
-                    self._show_error("Select an existing TLS certificate or CA file.")
-                    return
-                options["tls_ca_file"] = str(certificate)
-                hostname = self.tls_server_hostname.text().strip()
-                if not hostname:
-                    self._fill_certificate_name(str(certificate))
-                    hostname = self.tls_server_hostname.text().strip()
-                if hostname:
-                    options["tls_server_hostname"] = hostname
+                options["tls_verify_certificate"] = False
         else:
             device = self.bluetooth_device.currentData()
             if not isinstance(device, BluetoothDevice):
@@ -422,8 +367,9 @@ class ConnectionDialog(QDialog):
 class TlsCertificateDialog(QDialog):
     """Create local TLS files suitable for a Fluid Reality board."""
 
-    def __init__(self, server_name: str, parent: QWidget | None = None) -> None:
+    def __init__(self, server_name: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("ToolDialog")
         self.setWindowTitle("Create TLS certificate")
         self.setModal(True)
         self.setMinimumWidth(560)
@@ -434,26 +380,43 @@ class TlsCertificateDialog(QDialog):
         layout.setSpacing(14)
         title = QLabel("Create certificate files")
         title.setObjectName("DialogTitle")
-        explanation = QLabel(
-            "Create a self-signed server certificate and matching private key on this computer."
-        )
-        explanation.setObjectName("DialogSubtitle")
-        explanation.setWordWrap(True)
         layout.addWidget(title)
-        layout.addWidget(explanation)
 
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
-        self.server_name = QLineEdit(server_name or "rockford.local")
-        self.server_name.setPlaceholderText("Board hostname or IP address")
-        form.addRow(form_label("Server name"), self.server_name)
+        self.server_name = QLineEdit(server_name)
+        self.server_name.setPlaceholderText("Optional hostname or IP address")
+        form.addRow(form_label("Server name (optional)"), self.server_name)
 
         self.validity_days = QSpinBox()
         self.validity_days.setRange(1, 3650)
         self.validity_days.setValue(825)
         self.validity_days.setSuffix(" days")
         form.addRow(form_label("Valid for"), self.validity_days)
+
+        self.private_key_file_row = QWidget()
+        private_key_file_layout = QHBoxLayout(self.private_key_file_row)
+        private_key_file_layout.setContentsMargins(0, 0, 0, 0)
+        private_key_file_layout.setSpacing(7)
+        self.private_key_file = QLineEdit()
+        self.private_key_file.setPlaceholderText("Select an existing key or create a new one")
+        private_key_browse = QPushButton("Browse…")
+        private_key_browse.setObjectName("quietButton")
+        private_key_browse.clicked.connect(self._choose_private_key)
+        self.new_private_key_button = QPushButton()
+        self.new_private_key_button.setObjectName("quietButton")
+        self.new_private_key_button.setAccessibleName("Choose a new private-key file")
+        self.new_private_key_button.setToolTip("Choose a new private-key file")
+        self.new_private_key_button.setIcon(QIcon(str(NEW_FILE_ICON_PATH)))
+        self.new_private_key_button.setIconSize(QSize(20, 20))
+        self.new_private_key_button.setFixedSize(42, 38)
+        self.new_private_key_button.clicked.connect(self._choose_new_private_key)
+        private_key_file_layout.addWidget(self.private_key_file, 1)
+        private_key_file_layout.addWidget(private_key_browse)
+        private_key_file_layout.addWidget(self.new_private_key_button)
+        form.addRow(form_label("Private key"), self.private_key_file_row)
+        self._private_key_is_new = False
 
         self.key_password = QLineEdit()
         self.key_password.setPlaceholderText("Optional; leave empty for an unencrypted key")
@@ -462,20 +425,11 @@ class TlsCertificateDialog(QDialog):
         )
         form.addRow(form_label("Key password"), self.key_password)
 
-        output_row = QHBoxLayout()
-        documents = Path.home() / "Documents"
-        self.output_directory = QLineEdit(str(documents if documents.is_dir() else Path.home()))
-        browse = QPushButton("Browse…")
-        browse.setObjectName("quietButton")
-        browse.clicked.connect(self._choose_output_directory)
-        output_row.addWidget(self.output_directory, 1)
-        output_row.addWidget(browse)
-        form.addRow(form_label("Save in"), output_row)
         layout.addLayout(form)
 
         note = QLabel(
             "Keep the private key private. Share only the certificate with clients that "
-            "need to verify the board. Existing files will not be overwritten."
+            "need to verify the board. You will be asked before existing files are overwritten."
         )
         note.setObjectName("help")
         note.setWordWrap(True)
@@ -488,25 +442,108 @@ class TlsCertificateDialog(QDialog):
         layout.addWidget(self.error)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttons.button(QDialogButtonBox.Ok).setText("Create files")
+        self.buttons.button(QDialogButtonBox.Ok).setText("Create")
         self.buttons.accepted.connect(self._create)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
-    def _choose_output_directory(self) -> None:
-        selected = QFileDialog.getExistingDirectory(
-            self, "Choose where to save the TLS files", self.output_directory.text()
+    def _choose_private_key(self) -> None:
+        selected, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select an existing private key",
+            "",
+            "Private-key files (*.pem *.key);;All files (*)",
         )
         if selected:
-            self.output_directory.setText(selected)
+            self.private_key_file.setText(selected)
+            self._private_key_is_new = False
+
+    def _choose_new_private_key(self) -> None:
+        name = self.server_name.text().strip()
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-.")
+        stem = stem or "fluid-reality-board"
+        documents = Path.home() / "Documents"
+        initial_directory = documents if documents.is_dir() else Path.home()
+        selected, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save new private key",
+            str(initial_directory / f"{stem}-private-key.pem"),
+            "PEM private key (*.pem);;All files (*)",
+        )
+        if selected:
+            path = Path(selected)
+            if not path.suffix:
+                path = path.with_suffix(".pem")
+            self.private_key_file.setText(str(path))
+            self._private_key_is_new = True
 
     def _create(self) -> None:
+        name = self.server_name.text().strip()
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-.")
+        stem = stem or "fluid-reality-board"
+        documents = Path.home() / "Documents"
+        initial_directory = documents if documents.is_dir() else Path.home()
+        selected, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save TLS certificate",
+            str(initial_directory / f"{stem}-certificate.pem"),
+            "PEM certificate (*.pem);;All files (*)",
+            options=QFileDialog.DontConfirmOverwrite,
+        )
+        if not selected:
+            return
+        certificate_path = Path(selected)
+        if not certificate_path.suffix:
+            certificate_path = certificate_path.with_suffix(".pem")
+        private_key_text = self.private_key_file.text().strip()
+        existing_private_key = bool(private_key_text and not self._private_key_is_new)
+        if private_key_text and self._private_key_is_new:
+            new_private_key_path = Path(private_key_text)
+        elif not private_key_text:
+            certificate_stem = certificate_path.stem
+            if certificate_stem.lower().endswith("-certificate"):
+                certificate_stem = certificate_stem[: -len("-certificate")]
+            new_private_key_path = certificate_path.with_name(
+                f"{certificate_stem or stem}-private-key.pem"
+            )
+        else:
+            new_private_key_path = None
+
+        conflicts = [certificate_path] if certificate_path.exists() else []
+        if new_private_key_path is not None and new_private_key_path.exists():
+            conflicts.append(new_private_key_path)
+        overwrite = False
+        if conflicts:
+            names = "\n".join(f"• {path.name}" for path in conflicts)
+            answer = QMessageBox.question(
+                self,
+                "Overwrite existing files?",
+                f"The following file{'s' if len(conflicts) != 1 else ''} already "
+                f"exist{'s' if len(conflicts) == 1 else ''}:\n\n{names}\n\nOverwrite?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            overwrite = True
         try:
             self.generated_files = create_self_signed_tls_files(
-                self.output_directory.text(),
+                certificate_path.parent,
                 self.server_name.text(),
                 validity_days=self.validity_days.value(),
                 password=self.key_password.text(),
+                private_key_file=(
+                    private_key_text
+                    if existing_private_key
+                    else None
+                ),
+                certificate_file=certificate_path,
+                private_key_output_file=(
+                    private_key_text
+                    if private_key_text and self._private_key_is_new
+                    else None
+                ),
+                overwrite=overwrite,
             )
         except Exception as exc:
             self.error.setText(str(exc))
@@ -586,6 +623,7 @@ class NetworkWorker(QThread):
     interfaces_ready = Signal(tuple, bool)
     status_ready = Signal(dict)
     networks_ready = Signal(list)
+    access_point_ready = Signal(dict)
     token_ready = Signal(str)
     diagnostics_ready = Signal(dict)
     ethernet_ready = Signal(dict)
@@ -639,6 +677,18 @@ class NetworkWorker(QThread):
                 self._wait_for_wifi(str(args[0]))
             elif command == "wifi":
                 self._require_wifi_board().set_wifi_enabled(bool(args[0]))
+                self._emit_status()
+            elif command == "wifi_mode":
+                self._require_wifi_board().set_wifi_mode(str(args[0]))
+                self._emit_status()
+                self._emit_access_point_status()
+            elif command == "access_point_status":
+                self._emit_access_point_status()
+            elif command == "access_point_config":
+                fields = self._require_wifi_board().configure_access_point(
+                    str(args[0]), str(args[1]) or None, channel=int(args[2])
+                )
+                self.access_point_ready.emit(fields)
                 self._emit_status()
             elif command == "ethernet":
                 fields = self._require_ethernet_board().set_ethernet_enabled(
@@ -772,6 +822,8 @@ class NetworkWorker(QThread):
         )
         features = board.network_configuration_features
         self.features_ready.emit(features)
+        if "AP" in features and isinstance(board, WifiBoard):
+            self.access_point_ready.emit(board.access_point_status())
         if "AUTH" in features:
             redirected = bool(getattr(board.transport, "redirected", False))
             token = (
@@ -823,6 +875,9 @@ class NetworkWorker(QThread):
 
     def _emit_status(self) -> None:
         self.status_ready.emit(self._require_configurable_board().network_status())
+
+    def _emit_access_point_status(self) -> None:
+        self.access_point_ready.emit(self._require_wifi_board().access_point_status())
 
     def _scan(self) -> None:
         board = self._require_wifi_board()
@@ -916,8 +971,12 @@ class NetworkWorker(QThread):
         board = self._require_configurable_board()
         features = set(settings.get("features", ("IP", "HOST", "TCP")))
         interface = settings.get("interface") if settings.get("scoped") else None
-        if "IP" in features:
-            if settings["dhcp"]:
+        if "IP" in features and settings.get("apply_ip", True):
+            if settings.get("access_point_mode", False):
+                self._require_wifi_board().configure_access_point_ipv4(
+                    settings["address"], settings["subnet"]
+                )
+            elif settings["dhcp"]:
                 board.use_dhcp(interface)
             else:
                 board.set_static_ipv4(
@@ -976,6 +1035,7 @@ class NetworkConfigWindow(QMainWindow):
         self._network_features = tuple(
             getattr(board_class, "default_network_configuration_features", ())
         )
+        self._access_point_mode = False
 
         self.worker = NetworkWorker(board_class)
         self.worker.connected_changed.connect(self._on_connected)
@@ -985,6 +1045,7 @@ class NetworkConfigWindow(QMainWindow):
         self.worker.interfaces_ready.connect(self._on_interfaces)
         self.worker.status_ready.connect(self._on_status)
         self.worker.networks_ready.connect(self._on_networks)
+        self.worker.access_point_ready.connect(self._on_access_point_status)
         self.worker.token_ready.connect(self._on_token)
         self.worker.diagnostics_ready.connect(self._on_diagnostics)
         self.worker.ethernet_ready.connect(self._on_ethernet_status)
@@ -1204,6 +1265,47 @@ class NetworkConfigWindow(QMainWindow):
         controls.addStretch()
         controls.addWidget(scan)
         layout.addLayout(controls)
+        self.wifi_scan_button = scan
+
+        mode_form = QFormLayout()
+        self.wifi_mode_label = form_label("Mode")
+        self.wifi_mode = QComboBox()
+        self.wifi_mode.addItem("Client", "CLIENT")
+        self.wifi_mode.addItem("Access point", "ACCESS_POINT")
+        self.wifi_mode.activated.connect(
+            lambda: self.worker.enqueue("wifi_mode", self.wifi_mode.currentData())
+        )
+        mode_form.addRow(self.wifi_mode_label, self.wifi_mode)
+        layout.addLayout(mode_form)
+
+        self.access_point_panel = QFrame()
+        self.access_point_panel.setObjectName("ConfigCard")
+        access_point_layout = QVBoxLayout(self.access_point_panel)
+        access_point_layout.setContentsMargins(14, 12, 14, 12)
+        access_point_form = QFormLayout()
+        self.access_point_ssid = QLineEdit()
+        self.access_point_ssid.setPlaceholderText("Access point network name")
+        self.access_point_password = QLineEdit()
+        self.access_point_password.setPlaceholderText("Empty creates an open network")
+        self.access_point_password_visibility = add_secret_visibility(
+            self.access_point_password, secret_name="access point password"
+        )
+        self.access_point_channel = QSpinBox()
+        self.access_point_channel.setRange(1, 13)
+        access_point_form.addRow(form_label("Network name"), self.access_point_ssid)
+        access_point_form.addRow(form_label("Password"), self.access_point_password)
+        access_point_form.addRow(form_label("Channel"), self.access_point_channel)
+        access_point_layout.addLayout(access_point_form)
+        ap_footer = QHBoxLayout()
+        self.access_point_state = QLabel("Access point settings not read")
+        self.access_point_state.setObjectName("help")
+        self.access_point_apply = QPushButton("Apply")
+        self.access_point_apply.clicked.connect(self._apply_access_point)
+        ap_footer.addWidget(self.access_point_state, 1)
+        ap_footer.addWidget(self.access_point_apply)
+        access_point_layout.addLayout(ap_footer)
+        layout.addWidget(self.access_point_panel)
+        self.access_point_panel.hide()
 
         self.network_list = QTreeWidget()
         self.network_list.setHeaderLabels(
@@ -1266,10 +1368,38 @@ class NetworkConfigWindow(QMainWindow):
         footer.addWidget(forget)
         layout.addLayout(footer)
         self._action_widgets.extend(
-            [apply_wifi, scan, self.join_btn, hidden_join, disconnect, forget]
+            [apply_wifi, scan, self.join_btn, hidden_join, disconnect, forget,
+             self.wifi_mode, self.access_point_apply]
         )
+        self._client_mode_widgets = [
+            self.network_list, self.network_password, self.join_btn,
+            self.hidden_toggle, disconnect, forget,
+        ]
         self._network_selected()
         return tab
+
+    def _apply_access_point(self) -> None:
+        ssid = self.access_point_ssid.text().strip()
+        password = self.access_point_password.text()
+        if not ssid or len(ssid.encode("utf-8")) > 32:
+            QMessageBox.information(self, "Access point", "Enter a network name up to 32 bytes.")
+            return
+        if password and not 8 <= len(password.encode("utf-8")) <= 63:
+            QMessageBox.information(
+                self, "Access point", "The password must contain 8 to 63 bytes, or be empty."
+            )
+            return
+        self.worker.enqueue(
+            "access_point_config", ssid, password, self.access_point_channel.value()
+        )
+
+    def _update_wifi_mode_visibility(self) -> None:
+        access_point = self.wifi_mode.currentData() == "ACCESS_POINT"
+        self.access_point_panel.setVisible(access_point)
+        for widget in self._client_mode_widgets:
+            widget.setVisible(not access_point)
+        self.hidden_row.setVisible(not access_point and self.hidden_toggle.isChecked())
+        self.wifi_scan_button.setEnabled(self._connected and not access_point)
 
     def _ethernet_tab(self) -> QWidget:
         tab, layout = self._tab(
@@ -1305,8 +1435,9 @@ class NetworkConfigWindow(QMainWindow):
                 "ethernet", self.ethernet_enabled.isChecked()
             )
         )
-        ethernet_refresh = QPushButton("Refresh link status")
-        ethernet_refresh.setObjectName("quietButton")
+        ethernet_refresh = configure_refresh_button(
+            QPushButton(), "Refresh Ethernet link status"
+        )
         ethernet_refresh.clicked.connect(
             lambda: self.worker.enqueue("ethernet_status")
         )
@@ -1330,13 +1461,7 @@ class NetworkConfigWindow(QMainWindow):
         ip_layout.setSpacing(10)
         ip_title = QLabel("IP addressing")
         ip_title.setObjectName("SectionTitle")
-        ip_help = QLabel(
-            "DHCP is recommended. Use a static address only when the network requires one."
-        )
-        ip_help.setObjectName("help")
-        ip_help.setWordWrap(True)
         ip_layout.addWidget(ip_title)
-        ip_layout.addWidget(ip_help)
         form = QFormLayout()
         self.ip_form = form
         form.setHorizontalSpacing(18)
@@ -1346,7 +1471,16 @@ class NetworkConfigWindow(QMainWindow):
         self.use_dhcp = LabeledToggle("Automatically obtain an IP address (DHCP)")
         self.use_dhcp.setChecked(True)
         self.use_dhcp.toggled.connect(self._update_ip_enabled)
-        form.addRow(self._form_label("IP assignment"), self.use_dhcp)
+        self.ip_assignment = QWidget()
+        assignment_layout = QVBoxLayout(self.ip_assignment)
+        assignment_layout.setContentsMargins(0, 0, 0, 0)
+        assignment_layout.setSpacing(0)
+        assignment_layout.addWidget(self.use_dhcp)
+        self.ap_assignment = QLabel("Fixed by access-point mode")
+        self.ap_assignment.setObjectName("Hint")
+        self.ap_assignment.hide()
+        assignment_layout.addWidget(self.ap_assignment)
+        form.addRow(self._form_label("IP assignment"), self.ip_assignment)
         self.address = QLineEdit("192.168.1.64")
         self.subnet = QLineEdit("255.255.255.0")
         self.gateway = QLineEdit("192.168.1.1")
@@ -1370,10 +1504,7 @@ class NetworkConfigWindow(QMainWindow):
         tcp_layout.setSpacing(10)
         tcp_title = QLabel("TCP server")
         tcp_title.setObjectName("SectionTitle")
-        tcp_help = QLabel("Accept SDK and dashboard connections on this port.")
-        tcp_help.setObjectName("help")
         tcp_layout.addWidget(tcp_title)
-        tcp_layout.addWidget(tcp_help)
         self.tcp_enabled = LabeledToggle("Enable TCP server")
         self.tcp_enabled.setChecked(True)
         tcp_layout.addWidget(self.tcp_enabled)
@@ -1382,7 +1513,7 @@ class NetworkConfigWindow(QMainWindow):
         self.tcp_settings_row.setSpacing(10)
         self.tcp_port = QSpinBox()
         self.tcp_port.setRange(1, 65535)
-        self.tcp_port.setValue(8765)
+        self.tcp_port.setValue(49765)
         self.tcp_port.setFixedWidth(110)
         self.tcp_bind = QComboBox()
         self.tcp_bind.addItem("Any available interface", "ANY")
@@ -1402,12 +1533,7 @@ class NetworkConfigWindow(QMainWindow):
         access_layout.setSpacing(10)
         access_title = QLabel("Access token")
         access_title.setObjectName("SectionTitle")
-        access_help = QLabel(
-            "Clients use this optional token to authenticate. Keep it private."
-        )
-        access_help.setObjectName("help")
         access_layout.addWidget(access_title)
-        access_layout.addWidget(access_help)
         token_row = QHBoxLayout()
         self.token = QLineEdit()
         self.token.setReadOnly(True)
@@ -1415,25 +1541,25 @@ class NetworkConfigWindow(QMainWindow):
             self.token, secret_name="access token"
         )
         self.token.setPlaceholderText("No access token configured")
-        self.copy_token_btn = QPushButton("Copy")
+        self.copy_token_btn = QPushButton()
         self.copy_token_btn.setObjectName("quietButton")
+        self.copy_token_btn.setAccessibleName("Copy access token")
+        self.copy_token_btn.setToolTip("Copy access token")
+        self.copy_token_btn.setIcon(QIcon(str(COPY_ICON_PATH)))
+        self.copy_token_btn.setIconSize(QSize(20, 20))
+        self.copy_token_btn.setFixedSize(42, 38)
         self.copy_token_btn.clicked.connect(
             lambda: QApplication.clipboard().setText(self.token.text())
         )
+        self.generate_token_btn = QPushButton()
+        configure_refresh_button(
+            self.generate_token_btn, "Generate new access token"
+        )
+        self.generate_token_btn.clicked.connect(self._regenerate_token)
         token_row.addWidget(self.token, 1)
         token_row.addWidget(self.copy_token_btn)
+        token_row.addWidget(self.generate_token_btn)
         access_layout.addLayout(token_row)
-        token_footer = QHBoxLayout()
-        token_warning = QLabel(
-            "Generate prepares a new token. Save network settings to apply it."
-        )
-        token_warning.setObjectName("help")
-        self.generate_token_btn = QPushButton("Generate new token")
-        self.generate_token_btn.clicked.connect(self._regenerate_token)
-        token_footer.addWidget(token_warning)
-        token_footer.addStretch()
-        token_footer.addWidget(self.generate_token_btn)
-        access_layout.addLayout(token_footer)
         layout.addWidget(self.access_panel)
 
         self.encryption_panel = self._tls_section()
@@ -1464,29 +1590,22 @@ class NetworkConfigWindow(QMainWindow):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
 
-        header = QHBoxLayout()
-        header_copy = QVBoxLayout()
         title = QLabel("Encryption")
         title.setObjectName("SectionTitle")
-        help_text = QLabel(
-            "Encrypt TCP traffic with a server certificate and matching private key."
-        )
-        help_text.setObjectName("help")
-        help_text.setWordWrap(True)
-        header_copy.addWidget(title)
-        header_copy.addWidget(help_text)
-        header.addLayout(header_copy, 1)
+        layout.addWidget(title)
+        settings_row = QHBoxLayout()
         self.tls_enabled = LabeledToggle("Enable TLS encryption")
         self.tls_enabled.setChecked(False)
         self.tls_enabled.toggled.connect(self._update_tls_credentials_enabled)
-        header.addWidget(self.tls_enabled, 0, Qt.AlignTop)
+        settings_row.addWidget(self.tls_enabled)
+        settings_row.addStretch()
         self.tls_apply_btn = QPushButton("Save encryption setting")
         self.tls_apply_btn.setObjectName("quietButton")
         self.tls_apply_btn.clicked.connect(
             lambda: self.worker.enqueue("tls_enable", self.tls_enabled.isChecked())
         )
-        header.addWidget(self.tls_apply_btn, 0, Qt.AlignTop)
-        layout.addLayout(header)
+        settings_row.addWidget(self.tls_apply_btn)
+        layout.addLayout(settings_row)
 
         self.tls_credentials_panel = QFrame()
         self.tls_credentials_panel.setObjectName("ConnectionOptions")
@@ -1495,13 +1614,7 @@ class NetworkConfigWindow(QMainWindow):
         credentials_layout.setSpacing(10)
         credentials_title = QLabel("Certificate and private key")
         credentials_title.setObjectName("SectionTitle")
-        credentials_help = QLabel(
-            "Choose PEM files containing a server certificate and its matching private key."
-        )
-        credentials_help.setObjectName("help")
-        credentials_help.setWordWrap(True)
         credentials_layout.addWidget(credentials_title)
-        credentials_layout.addWidget(credentials_help)
 
         credentials_form = QFormLayout()
         credentials_form.setHorizontalSpacing(14)
@@ -1551,12 +1664,7 @@ class NetworkConfigWindow(QMainWindow):
         credentials_layout.addLayout(install_row)
 
         footer = QHBoxLayout()
-        note = QLabel(
-            "Clients use the certificate file to verify the board's identity."
-        )
-        note.setObjectName("help")
-        note.setWordWrap(True)
-        footer.addWidget(note, 1)
+        footer.addStretch()
         self.tls_clear_btn = QPushButton("Erase TLS credentials")
         self.tls_clear_btn.setObjectName("dangerButton")
         self.tls_clear_btn.clicked.connect(self._clear_tls)
@@ -1589,8 +1697,7 @@ class NetworkConfigWindow(QMainWindow):
             field.setText(path)
 
     def _create_tls_credentials(self) -> None:
-        server_name = self.hostname.text().strip() or "rockford.local"
-        dialog = TlsCertificateDialog(server_name, self)
+        dialog = TlsCertificateDialog(parent=self)
         if dialog.exec() != QDialog.Accepted or dialog.generated_files is None:
             return
         self.tls_certificate_path.setText(str(dialog.generated_files.certificate))
@@ -1687,6 +1794,19 @@ class NetworkConfigWindow(QMainWindow):
         if "HOST" in self._network_features and not self.hostname.text().strip():
             QMessageBox.information(self, "Hostname", "Enter a hostname.")
             return
+        if "IP" in self._network_features and self._access_point_mode:
+            try:
+                address = ipaddress.IPv4Address(self.address.text().strip())
+                subnet = ipaddress.IPv4Network(
+                    f"0.0.0.0/{self.subnet.text().strip()}"
+                ).netmask
+                if address.is_unspecified or subnet == ipaddress.IPv4Address("0.0.0.0"):
+                    raise ValueError
+            except ValueError:
+                QMessageBox.information(
+                    self, "IP addressing", "Enter a valid AP address and subnet mask."
+                )
+                return
         if self._connected_over_network:
             answer = QMessageBox.warning(
                 self,
@@ -1702,6 +1822,8 @@ class NetworkConfigWindow(QMainWindow):
         self.worker.enqueue(
             "apply",
             {
+                "apply_ip": True,
+                "access_point_mode": self._access_point_mode,
                 "dhcp": self.use_dhcp.isChecked(),
                 "address": self.address.text().strip(),
                 "subnet": self.subnet.text().strip(),
@@ -1724,7 +1846,7 @@ class NetworkConfigWindow(QMainWindow):
         features = set(self._network_features)
         current_ip = self._last_status.get("IP", "").strip()
         hostname = self.hostname.text().strip()
-        if "IP" in features and not self.use_dhcp.isChecked():
+        if "IP" in features and not self._access_point_mode and not self.use_dhcp.isChecked():
             host = self.address.text().strip()
         elif "HOST" in features and hostname:
             host = hostname
@@ -1902,6 +2024,12 @@ class NetworkConfigWindow(QMainWindow):
             self.tabs.indexOf(self.connection_only_tab), not configurable
         )
         self.tabs.setTabVisible(self.tabs.indexOf(self.wifi_tab), has_wifi)
+        access_point_supported = has_wifi and "AP" in features
+        self.wifi_mode_label.setVisible(access_point_supported)
+        self.wifi_mode.setVisible(access_point_supported)
+        if not access_point_supported:
+            self.wifi_mode.setCurrentIndex(0)
+        self._update_wifi_mode_visibility()
         self.tabs.setTabVisible(self.tabs.indexOf(self.ethernet_tab), has_ethernet)
         self.tabs.setTabVisible(
             self.tabs.indexOf(self.ip_tcp_tab),
@@ -1918,13 +2046,14 @@ class NetworkConfigWindow(QMainWindow):
             self.tabs.style().polish(self.tabs)
         if hasattr(self, "ip_form"):
             for widget in (
-                self.ip_interface, self.use_dhcp, self.address, self.subnet,
+                self.ip_interface, self.ip_assignment, self.address, self.subnet,
                 self.gateway, self.dns1, self.dns2,
             ):
                 self.ip_form.setRowVisible(widget, "IP" in features)
             self.ip_form.setRowVisible(self.hostname, "HOST" in features)
             self.ip_panel.setVisible(bool(features & {"IP", "HOST"}))
             self.tcp_panel.setVisible("TCP" in features)
+            self._update_ip_mode_display()
             self.access_panel.setVisible("AUTH" in features)
             self.encryption_panel.setVisible("TLS" in features)
             self.save_network_settings.setVisible(bool(features & {"IP", "HOST", "TCP"}))
@@ -1982,6 +2111,9 @@ class NetworkConfigWindow(QMainWindow):
 
     def _on_status(self, fields: dict[str, str]) -> None:
         self._last_status = dict(fields)
+        self._access_point_mode = (
+            fields.get("WIFI_MODE", "CLIENT").upper() == "ACCESS_POINT"
+        )
         state = fields.get("STATE", "UNKNOWN").replace("_", " ").title()
         if "WIFI" in self._interfaces:
             network_name = decode_ssid(fields.get("SSID64", "")) or "Not selected"
@@ -1997,6 +2129,13 @@ class NetworkConfigWindow(QMainWindow):
         self.tcp_status.value.setText(tcp)
         if "WIFI" in self._interfaces:
             self.wifi_enabled.setChecked(fields.get("WIFI", "OFF").upper() == "ON")
+            mode = fields.get("WIFI_MODE", "CLIENT").upper()
+            mode_index = self.wifi_mode.findData(mode)
+            if mode_index >= 0:
+                self.wifi_mode.blockSignals(True)
+                self.wifi_mode.setCurrentIndex(mode_index)
+                self.wifi_mode.blockSignals(False)
+            self._update_wifi_mode_visibility()
         self.use_dhcp.setChecked(fields.get("MODE", "DHCP").upper() == "DHCP")
         self.hostname.setText(fields.get("HOST", self.hostname.text()))
         self.tcp_enabled.setChecked(fields.get("TCP", "OFF").upper() == "ON")
@@ -2011,6 +2150,7 @@ class NetworkConfigWindow(QMainWindow):
             value = fields.get(key)
             if value and value != "0.0.0.0":
                 widget.setText(value)
+        self._update_ip_mode_display()
 
     def _on_networks(self, networks: list[Any]) -> None:
         self.network_list.clear()
@@ -2036,6 +2176,17 @@ class NetworkConfigWindow(QMainWindow):
             self.network_list.addTopLevelItem(item)
         if self.network_list.topLevelItemCount():
             self.network_list.setCurrentItem(self.network_list.topLevelItem(0))
+
+    def _on_access_point_status(self, fields: dict[str, str]) -> None:
+        self.access_point_ssid.setText(decode_ssid(fields.get("SSID64", "")))
+        if fields.get("CHANNEL"):
+            self.access_point_channel.setValue(int(fields["CHANNEL"]))
+        state = fields.get("STATE", "INACTIVE").replace("_", " ").title()
+        clients = fields.get("CLIENTS", "0")
+        address = fields.get("IP", "192.168.24.1")
+        self.access_point_state.setText(
+            f"{state} · {address} · {clients} client{'s' if clients != '1' else ''}"
+        )
 
     def _on_token(self, token: str) -> None:
         self.token.setText(token)
@@ -2076,8 +2227,26 @@ class NetworkConfigWindow(QMainWindow):
         self._update_tls_credentials_enabled()
 
     def _update_ip_enabled(self) -> None:
-        for field in getattr(self, "_static_fields", []):
-            field.setEnabled(not self.use_dhcp.isChecked())
+        if self._access_point_mode:
+            self.address.setEnabled(True)
+            self.subnet.setEnabled(True)
+            for field in (self.gateway, self.dns1, self.dns2):
+                field.setEnabled(False)
+        else:
+            for field in getattr(self, "_static_fields", []):
+                field.setEnabled(not self.use_dhcp.isChecked())
+
+    def _update_ip_mode_display(self) -> None:
+        if not hasattr(self, "ap_assignment"):
+            return
+        ip_supported = "IP" in set(self._network_features)
+        self.use_dhcp.setVisible(ip_supported and not self._access_point_mode)
+        self.ap_assignment.setVisible(ip_supported and self._access_point_mode)
+        for widget in (self.gateway, self.dns1, self.dns2):
+            self.ip_form.setRowVisible(
+                widget, ip_supported and not self._access_point_mode
+            )
+        self._update_ip_enabled()
 
     def _log(self, message: str, kind: str = "info") -> None:
         if not hasattr(self, "log"):
@@ -2144,7 +2313,8 @@ QLabel#ConnectionHint {
     color: #5d6c7b;
     font-size: 12px;
 }
-QDialog#ConnectionDialog {
+QDialog#ConnectionDialog,
+QDialog#ToolDialog {
     background: #f7f7fc;
     color: #1a1b1f;
 }
@@ -2358,6 +2528,7 @@ QTextEdit {
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     app.setStyle("Fusion")
     font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
     font.setPointSize(10)

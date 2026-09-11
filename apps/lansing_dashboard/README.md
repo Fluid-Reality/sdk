@@ -18,6 +18,13 @@ capabilities are read from the connected board. This allows the same dashboard
 to adapt to Lansing, Rockford, and future boards implementing the shared SDK
 protocol.
 
+The compatibility launcher includes the canonical dashboard's current
+play/stop/save actuator workflows, live voltage/current plots, capability-gated
+Board Tools, firmware update, Bluetooth and Wi-Fi configuration, and USB-only
+factory reset. Behavior is documented only in the canonical
+[Fluid Reality Dashboard README](../fluidreality_dashboard/README.md) so the two
+entry points cannot drift.
+
 ## Run
 
 Install the application requirements, then launch the compatibility entrypoint:

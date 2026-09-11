@@ -1,85 +1,136 @@
 # Fluid Reality Dashboard
 
-Desktop dashboard for Fluid Reality boards that inherit from the SDK `Board`
-class and implement its shared command protocol.
-
-The UI uses the Fluid Reality logo in `assets/fluid_reality_logo.png` and a palette aligned with the public site: white surfaces, black ink, Fluid red accents, and blue active-state highlights.
-
-The dashboard's Connect button opens a dedicated dialog with Serial, Network,
-and Bluetooth options. Serial lists available USB ports. Network supports
-authenticated TCP or TLS; TLS verifies the board with a selected PEM
-certificate or CA file. Bluetooth scans for nearby Fluid Reality boards and
-supports optional access-token authentication and BLE pairing.
+Desktop dashboard for Fluid Reality boards implementing the SDK `Board`
+protocol. The UI adapts to capabilities reported by connected firmware, so
+unsupported tools stay hidden or disabled.
 
 For the complete operator guide, see the
-[Lansing Development Kit Dashboard User Manual](docs/lansing_dashboard_manual.md).
+[dashboard user manual](docs/lansing_dashboard_manual.md).
 
-## Features
+## Connections
 
-- Connect directly over serial/USB, Bluetooth LE, TCP, or TLS without creating a virtual-port alias.
-- View power supply state, output connection state, voltage, current, and timing config.
-- Discover the actuator count from the board's `STS` response. Up to eight actuator cards are shown directly; larger boards are split into groups of eight.
-- Query `PSC` as a capability during connection. Boards that return `OK:NONE`
-  hide the Output Connection card and are treated as having no separate
-  connection step.
-- Click an actuator card to select it; initialize, diagnose, and square-wave actions apply to the selected actuator.
-- Actuator cards are created from the connected board's `STS` response and are
-  removed on disconnect. A detected-good actuator shows `Ready`; an undetected
-  actuator does not display current details.
-- When PSU is on and output is connected, the selected group is auto-detected:
-  - a current delta below the selected board class's detection threshold means
-    not connected
-  - delta `> 3.0 mA` means error; run `Initialize` first because it normally recovers the actuator by reducing excess current draw
-  - otherwise the actuator is shown as `Ready` and available
-- Connected actuators expose a configurable `Recover` action, including working and error-state actuators. Use recovery only if initialization does not clear the error. Recovery is for advanced users only: it temporarily disables manual-output safety, alternates positive and negative manual drive for the requested duration, reports the current delta every second, restores safety, and reports the final delta against baseline.
-- Recovery voltage is scaled from the measured PSU voltage. For example, if the PSU reads `200 V` and recovery is set to `100 V`, the dashboard drives approximately half of the available supply voltage in each direction.
-- Recovery defaults are `50 V` for `60 s`.
-- Run full `Diagnose` again after recovery to reclassify the actuator; if the delta returns to the idle range, the card becomes available again.
-- Fast Init provides an alternate initialization tab for connected actuators. The target current delta is configurable and must stay below the `3.0 mA` Error threshold. It defaults to `2.0 mA`, runs a 1 Hz positive/negative manual square wave starting at maximum voltage, and uses proportional voltage adjustments:
-  - `5 V` steps when the current-delta error is `0-0.2 mA`
-  - `10 V` steps when the error is `0.2-1.0 mA`
-  - `20 V` steps when the error is greater than `1.0 mA`
-  - success means the actuator runs at maximum voltage with delta at or below `2.0 mA`; failure means the process reaches `60 s`
-- Turn the power supply on/off and connect/disconnect the output.
-- Initialize or diagnose a target actuator.
-- Run an indefinite square wave on one or more actuators until stopped:
-  - 1 second at the measured supply voltage
-  - command off, which triggers firmware-managed discharge
-  - wait for firmware debug confirmation that discharge stopped before reactivating
+The Connect window supports USB serial, authenticated TCP, TLS with server
+certificate verification, and Bluetooth LE with discovery, optional pairing,
+and optional access-token authentication. An access token is sent only when one
+is entered. Authentication failures are translated into user-facing messages.
 
-## Virtual simulator ports
+## Dashboard Layout
 
-Configure an alias before launching the dashboard:
+The header shows the Fluid Reality logo and the single title `Dashboard`.
+Power, voltage, and current each occupy one metric card. The Power switch turns
+the PSU on or off and also controls PSC when the board exposes a separate power
+connection.
 
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
-```
+Actuator cards are grouped in sets of eight. The `STS` response defines the
+actuator count. Selecting a card chooses the actuator used by the actuator
+tools; selecting a different group runs detection when power is ready.
 
-`COM66` appears in the port selector and connects to the mapped simulator.
-Selecting an unmapped port such as `COM9` continues to use physical serial.
+Board Tools contains Board Settings, Bluetooth Config, Wi-Fi Config, Network
+Config, Security & Encryption, Fluid Mesh, Update Firmware, and Factory Reset.
+Each button follows the corresponding firmware capability.
+
+## Detection And Actuator States
+
+When power is on, the dashboard detects the visible actuator group. Firmware
+with `DET>0` runs batch `DT0` using one shared baseline and then runs `DT1` only
+for actuators found present. Results appear as they arrive.
+
+- `Ready` means the actuator passed detection and can be driven.
+- `Error` means current is above the configured DT1 error threshold.
+- `Not connected` is assigned only by `DT0` when the minimum detection delta is
+  not reached.
+- `N/A` means no detection result is available in the dashboard session.
+
+After detection, a later diagnosis does not change an actuator back to
+`Not connected`; a new `DT0` is required. The default minimum detection delta
+is `0.10 mA`.
+
+## Actuator Tools
+
+Initialize, Fast Init, Diagnose, Recover, and Square Wave use the same window
+structure. Play, Stop, and Save controls sit above the plots. While a process
+is running, only Stop is active. Starting again after a stop clears the old
+plots. Save writes collected samples to CSV.
+
+All time plots show only their rolling last 30 seconds. Current plots never
+display a negative axis and place `0 mA` at the bottom. The red progress marker
+follows the current sample value, and its label is drawn above plotted data.
+
+### Initialize
+
+Initialize measures one baseline and runs a 1 Hz bipolar sequence at `±25 V`,
+`±50 V`, `±100 V`, and `±200 V`, spending 30 seconds at each level. Current is
+measured after every voltage change, but current delta is recorded and plotted
+only for positive-output samples. A diagnosis runs afterward.
+
+### Fast Init
+
+Fast Init alternates directly between positive and reverse output without 0 V
+stops. It begins at full available voltage and adjusts by `5 V`, `10 V`, or
+`20 V` according to error from the requested current-delta target. The target
+must be greater than zero and below `3.0 mA`. It succeeds when full voltage is
+reached at or below the target and otherwise stops after 60 seconds. Only
+positive-output current deltas are plotted.
+
+### Diagnose
+
+Diagnose warms the actuator with full forward output for one second and full
+reverse output for one second, repeated three times. It then sweeps `0-200 V`
+in `10 V` increments and plots current against voltage on a square chart with a
+`0-5 mA` current axis.
+
+Two configurable curves divide the chart into healthy (green), caution
+(orange), and error (red) regions. The final message uses the complete trace:
+
+- always green: the actuator is in great shape
+- any caution/error excursion with a non-red ending: the actuator is
+  functional, but initialization is recommended
+- a red ending: the actuator is outside the acceptable range and Recover is
+  recommended
+
+### Recover
+
+Recover is enabled only for actuators in the `Error` state. It automatically
+runs `±25 V`, `±50 V`, `±100 V`, and `±200 V`. Each stage remains active until
+the positive-output current delta stays at or below 90% of that voltage's error
+curve for three consecutive seconds. Reverse-output current is not used for
+qualification or plotted. Markers identify every voltage increase. Run
+Diagnose afterward to reclassify the actuator.
+
+### Square Wave
+
+Square Wave alternates one second at full forward voltage with one second at
+full reverse voltage. The reverse phase is labeled `Discharging` and plotted as
+reverse full voltage. It continues until Stop. Voltage and positive-output
+current delta are plotted live and can be saved to CSV.
+
+## Board Tools
+
+- Board Settings edits timing, safety, debug, and supported detection
+  thresholds.
+- Bluetooth Config enables Bluetooth, configures security, clears bonds, and
+  changes only the suffix of the advertised name. Firmware always adds `FR-`.
+- Wi-Fi Config selects Client or Access Point mode. Client mode scans and joins
+  networks. Access Point mode configures SSID, password, and channel.
+- Network Config selects DHCP or static IPv4 settings per interface. Access
+  Point mode uses its own static address and subnet; its default address is
+  `192.168.24.1`, and the board runs a DHCP server for clients.
+- Security & Encryption separately enables access-token authentication and TLS.
+  It installs or clears credentials and can create a self-signed certificate.
+  Private-key creation uses a Save dialog and confirms before overwriting.
+- Fluid Mesh is enabled only when firmware reports `MESH`; Rockford currently
+  reports no Fluid Mesh support.
+- Update Firmware is enabled only with `FWU>0` over USB, TCP, or TLS. It uploads
+  a `.bin`, verifies SHA-256, reboots, and reconnects. Bluetooth is unsupported.
+- Factory Reset is enabled only with `FCR>0` over USB. After confirmation it
+  erases persistent configuration, reboots, and reconnects automatically.
 
 ## Run
 
-Clone the SDK repository and enter the dashboard application folder.
-
-macOS or Linux:
-
-```bash
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk/apps/fluidreality_dashboard
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ../..
-python -m pip install -r requirements.txt
-python app.py
-```
-
-Windows PowerShell:
+From a cloned SDK checkout:
 
 ```powershell
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk\apps\fluidreality_dashboard
+cd C:\research\FluidReality\sdk\apps\fluidreality_dashboard
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -88,10 +139,5 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-The editable install ensures the dashboard uses the SDK from this checkout.
-
-## Notes
-
-- Normal actuator output uses the SDK `ACT` path, so the firmware still enforces PSU state, connection state, runtime tracking, maximum active time, and discharge lockout.
-- Square wave output continues until `Stop`, `All Off`, disconnect, or app close.
-- Long `INI` and `DIA` operations run on a background worker thread so the UI remains responsive.
+On macOS or Linux, create the environment with `python3 -m venv .venv` and
+activate it with `source .venv/bin/activate`.

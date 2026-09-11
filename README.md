@@ -73,7 +73,7 @@ port name without code changes. Set `FLUID_REALITY_VIRTUAL_PORTS` before startin
 the application:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 ```
 
 Only `Lansing("COM66")` uses the mapped TCP endpoint. Selecting another COM
@@ -99,7 +99,7 @@ Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
 ```python
 from fluid_reality import Rockford
 
-board = Rockford("tcp://192.168.1.64:8765", network_token="your-device-token")
+board = Rockford("tcp://192.168.1.64:49765", network_token="your-device-token")
 print(board.network_status())
 ```
 
@@ -161,7 +161,7 @@ line commands and binary streaming:
 ```python
 from fluid_reality import TcpDeviceListener
 
-with TcpDeviceListener("127.0.0.1", 8765) as listener:
+with TcpDeviceListener("127.0.0.1", 49765) as listener:
     while True:
         with listener.accept() as connection:
             while chunk := connection.read_bytes(4096):
@@ -176,86 +176,25 @@ inside their protocol engine.
 
 ## Touch Validation Example
 
-This example powers the board, detects actuator `0`, initializes it if needed,
-then asks the user to touch the actuator while it pulses once:
+The maintained
+[basic actuator example](examples/01_basic_actuator_current.py) connects to a
+board, enables power, detects an actuator, runs a bounded pulse, measures
+current, and shuts output and power down even if an error occurs.
 
-- full on for 250 ms
-- off for 250 ms while the board discharges it in the opposite direction
-
-Save this as `touch_validation.py`.
-
-```python
-import sys
-import time
-
-from fluid_reality import ActuatorState, Lansing
-
-
-def main() -> None:
-    if len(sys.argv) != 3:
-        print("Usage: python touch_validation.py <serial-port> <actuator>")
-        print("Find the port with: python -m serial.tools.list_ports")
-        raise SystemExit(2)
-
-    port = sys.argv[1]
-    actuator = int(sys.argv[2])
-
-    with Lansing(port) as board:
-        print("Connected.")
-
-        board.power_supply(True)
-        voltage = board.voltage()
-        print(f"Power supply voltage: {voltage:.2f} V")
-
-        board.connect_power(True)
-        print(f"Idle current: {board.current():.2f} mA")
-
-        state = board.detect(actuator)
-        print(f"Actuator {actuator} state after detection: {state.value}")
-
-        if state is ActuatorState.ERROR:
-            print("Actuator needs initialization. This can take about two minutes.")
-            state = board.initialize(actuator)
-            print(f"Actuator {actuator} state after initialization: {state.value}")
-
-        if state is not ActuatorState.READY:
-            raise RuntimeError(
-                f"Actuator {actuator} is {state.value}; it is not ready to drive."
-            )
-
-        input(f"Touch actuator {actuator}, then press Enter to run the touch validation.")
-
-        print(f"Actuator {actuator} full on for 250 ms.")
-        board.set_actuator(actuator, 255)
-        time.sleep(0.250)
-
-        print(f"Actuator {actuator} off for 250 ms while it discharges.")
-        board.set_actuator(actuator, 0)
-        time.sleep(0.250)
-
-        board.all_actuators_off()
-        print(f"Done. You should have felt actuator {actuator} during the pulse.")
-
-
-if __name__ == "__main__":
-    main()
+```powershell
+python examples\01_basic_actuator_current.py COM18 --actuator 0
+python examples\01_basic_actuator_current.py COM5 --board lansing --actuator 0
 ```
 
-Run it with the serial port you found earlier:
-
-```bash
-python touch_validation.py <serial-port> <actuator>
-```
-
-For example, replace `<serial-port>` with the port name reported on your
-machine, such as a Windows `COM...` device, a macOS `/dev/cu...` device, or a
-Linux `/dev/tty...` device. To validate actuator 0, pass `0` as the actuator
-number.
+The same example accepts `tcp://`, `tls://`, and `ble://` endpoints, access
+tokens, TLS trust settings, or a YAML connection profile. Run it with `--help`
+for all connection and pulse options.
 
 ## Core Concepts
 
-`Lansing(port)` opens the board connection. Use it as a context manager so the
-serial port closes cleanly when the script exits.
+`Rockford(endpoint)` and `Lansing(endpoint)` select the hardware profile. An
+endpoint can be USB serial, TCP, TLS, or Bluetooth. Use boards as context
+managers so the transport closes cleanly.
 
 The power supply and PSU connection to the actuator path are separate:
 
@@ -269,7 +208,8 @@ Actuators have SDK states:
 
 - `Unknown`: the default state when the board object is created.
 - `Ready`: the actuator has been detected and is safe to drive normally.
-- `Not connected`: the SDK did not measure a meaningful current change.
+- `Present`: DT0 found a meaningful current change and DT1 has not completed.
+- `Not connected`: DT0 did not measure the configured minimum current delta.
 - `Error`: the current delta is too high for normal operation. Run
   `board.initialize(actuator)` before trying to use the actuator. Initialization
   runs a staged recovery sequence and then diagnoses the actuator again. If it
@@ -277,11 +217,11 @@ Actuators have SDK states:
   `Error`, leave the actuator off, check the physical connection, and contact
   Fluid Reality support before continuing.
 
-Before driving an actuator, call `board.detect(actuator)`. Detection checks the
-forward-current delta after 250 ms against a 10 mA hard limit. If safe, it keeps
-only that actuator continuously forward at maximum output for another 2 seconds
-and classifies the resulting delta. `set_actuator()` only works when that
-actuator is `Ready`.
+Before driving an actuator, call `board.detect(actuator)`. Current Rockford
+firmware performs DT0 and DT1 detection on the board. `Not connected` is only a
+DT0 result; once an actuator is present, later diagnosis does not return it to
+`Not connected` unless DT0 is run again. `set_actuator()` only works when the
+SDK state is `Ready`.
 
 Actuators may need initialization after storage, shipping, or long periods
 without use. If `detect()` returns `Error`, run `board.initialize(actuator)`.
@@ -354,7 +294,18 @@ and platform-specific usage instructions.
 
 ## Examples
 
-Example scripts are available in [examples](examples):
+Example scripts are available in [examples](examples). Board examples accept a
+USB serial port, a `tcp://`, `tls://`, or `ble://` endpoint, or a YAML profile:
+
+```powershell
+python examples\05_status_snapshot.py COM18
+python examples\05_status_snapshot.py tcp://192.168.24.1:49765 --access-token TOKEN
+python examples\05_status_snapshot.py --connection-file board.connection.yaml
+python examples\05_status_snapshot.py COM5 --board lansing
+```
+
+Rockford is the default hardware profile. Pass `--board lansing` for Lansing.
+Use `python <example> --help` for each example's complete options.
 
 - [01_basic_actuator_current.py](examples/01_basic_actuator_current.py):
   power the board, connect the output, detect one actuator, pulse it, and read
@@ -366,10 +317,19 @@ Example scripts are available in [examples](examples):
 - [04_debug_logging.py](examples/04_debug_logging.py):
   enable SDK and firmware debug output and save it to a log file.
 - [05_status_snapshot.py](examples/05_status_snapshot.py):
-  print a full board status snapshot.
+  print firmware identity, capabilities, and a full status snapshot.
 - [06_manual_output_bench_test.py](examples/06_manual_output_bench_test.py):
-  run direct positive/negative manual-output bench commands.
+  run low-level output and timed-current bench commands using the board's
+  electrical model.
 - [07_error_handling.py](examples/07_error_handling.py):
   show how to catch SDK exceptions and print recovery guidance.
 - [08_actuator_pulse_until_key.py](examples/08_actuator_pulse_until_key.py):
   repeatedly pulse one actuator until a key is pressed.
+- [09_bluetooth_discovery.py](examples/09_bluetooth_discovery.py):
+  discover Fluid Reality Bluetooth boards and optionally connect to one.
+- [10_network_configuration.py](examples/10_network_configuration.py):
+  inspect or update Wi-Fi mode, IP, hostname, and TCP settings.
+- [11_firmware_update.py](examples/11_firmware_update.py):
+  upload and verify a firmware image over USB, TCP, or TLS.
+- [12_factory_reset.py](examples/12_factory_reset.py):
+  factory-reset a Rockford board over USB with explicit confirmation.

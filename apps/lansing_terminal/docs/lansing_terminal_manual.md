@@ -1,13 +1,15 @@
-# Lansing Terminal Operator and Command Reference
+# Fluid Reality Terminal Operator and Command Reference
 
-`lansing_terminal` is the command-line operator interface for the Fluid Reality
-Lansing Development Kit. It provides interactive board control for laboratory
-use and a non-interactive mode for scripts, test fixtures, and automated setup
-benches.
+`lansing_terminal` is the command-line operator interface for Fluid Reality
+Lansing and Rockford boards. It provides interactive board control for
+laboratory use and a non-interactive mode for scripts, test fixtures, and
+automated setup benches.
 
 The terminal can:
 
-- discover physical and virtual ports and connect to a Lansing controller;
+- discover physical and virtual ports and connect to a Lansing or Rockford controller;
+- inspect capabilities and configure Rockford networking and Bluetooth;
+- install firmware and perform a guarded USB-only Rockford factory reset;
 - control the high-voltage power supply and its connection to the actuator path;
 - read voltage, current, configuration, status, and runtime counters;
 - detect, diagnose, initialize, fast-initialize, and recover actuators;
@@ -120,13 +122,13 @@ python lansing_terminal.py --help
 The general invocation is:
 
 ```text
-python lansing_terminal.py [--port PORT] [--verbose] [-j|--json] [-c COMMANDS]
+python lansing_terminal.py [--board lansing|rockford] [--access-token TOKEN] [--port PORT] [--verbose] [-j|--json] [-c COMMANDS]
 ```
 
 With no options, the application starts an interactive disconnected session:
 
 ```text
-Fluid Reality Lansing terminal. Type 'help' for commands.
+Fluid Reality board terminal. Type 'help' for commands.
 lansing(disconnected)>
 ```
 
@@ -168,6 +170,17 @@ closes the board, and returns exit status `1`. A successful sequence returns
 `0`.
 
 ## Command-line options
+
+### `--board lansing|rockford`
+
+Select the hardware profile. `lansing` remains the default. Select `rockford`
+for its eight-actuator layout and network, Bluetooth, `OUC`, firmware-update,
+and factory-reset commands. The prompt reflects the selected profile.
+
+### `--access-token TOKEN`
+
+Authenticate a TCP/TLS endpoint before issuing board commands. Omit this for
+direct USB serial and endpoints that do not require a token.
 
 ### `--port PORT`
 
@@ -465,7 +478,7 @@ ports
 
 Lists physical serial ports and port aliases configured through
 `FLUID_REALITY_VIRTUAL_PORTS`, such as
-`COM66=tcp://127.0.0.1:8765`. A board connection is not required.
+`COM66=tcp://127.0.0.1:49765`. A board connection is not required.
 
 Text example:
 
@@ -505,7 +518,7 @@ Examples:
 connect COM6
 connect /dev/cu.usbmodem1101
 connect /dev/ttyACM0
-connect tcp://127.0.0.1:8765
+connect tcp://127.0.0.1:49765
 ```
 
 If a square wave is running, `connect` stops it before changing the connection.
@@ -527,6 +540,33 @@ disconnected is harmless.
 
 Disconnecting discards SDK-side actuator classifications. After reconnecting,
 actuators begin in `Unknown` state and must be detected again.
+
+### `capabilities`
+
+Print the connected firmware's capability flags.
+
+### `network`
+
+Rockford network operations are grouped under `network`. Run `help network`
+for syntax covering status, interfaces, diagnostics, hostname, DHCP, static
+IPv4, TCP server settings, and client/access-point mode.
+
+### `bluetooth`
+
+Rockford Bluetooth operations are grouped under `bluetooth`. The `name`
+operation accepts only the suffix; firmware always prepends `FR-`.
+
+### `firmware_update`
+
+`firmware_update <image.bin>` installs and verifies an image over USB serial,
+TCP, or TLS and reports byte progress. Firmware update is not available over
+Bluetooth.
+
+### `factory_reset`
+
+`factory_reset FACTORY_RESET` permanently erases persistent Rockford settings,
+reboots, and reconnects. The confirmation token is mandatory and the command
+is available only over direct USB serial.
 
 ### `status`
 

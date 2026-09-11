@@ -36,6 +36,64 @@ def test_lansing_reads_version_fields():
     assert transport.writes == ["VER"]
 
 
+def test_board_reads_capability_fields():
+    transport = FakeTransport(["OK:USB>1,WIFI>1,FWU>0"])
+    board = Lansing(transport=transport)
+
+    assert board.capabilities() == {"USB": "1", "WIFI": "1", "FWU": "0"}
+    assert transport.writes == ["CAP"]
+
+
+def test_firmware_batch_detection_streams_each_actuator_result():
+    class TwoActuatorLansing(Lansing):
+        actuator_count = 2
+
+    transport = FakeTransport(
+        [
+            "OK:BASE>0.10",
+            "OK:ACT>0,BASE>0.10,FWD>0.11,DELTA>0.01,STATE>NOT_CONNECTED",
+            "OK:ACT>1,BASE>0.10,FWD>0.45,DELTA>0.35,STATE>PRESENT",
+            "OK:ACT>1,BASE>0.10,FWD>0.48,DELTA>0.38,STATE>READY",
+        ]
+    )
+    board = TwoActuatorLansing(transport=transport)
+    streamed = []
+
+    detections = board.detect_all_firmware(streamed.append)
+
+    assert transport.writes == ["DT0", "DT1 1"]
+    assert [item.actuator for item in streamed] == [0, 1, 1]
+    assert streamed[1].state is ActuatorState.PRESENT
+    assert streamed[2].state is ActuatorState.READY
+    assert detections[0].state is ActuatorState.NOT_CONNECTED
+    assert detections[1].state is ActuatorState.READY
+    assert board.last_detection(1) == detections[1]
+
+
+def test_single_firmware_detection_uses_dt0_actuator_command():
+    transport = FakeTransport(
+        ["OK:ACT>3,BASE>0.10,FWD>11.20,DELTA>11.10,STATE>ERROR"]
+    )
+    board = Lansing(transport=transport)
+
+    detection = board.detect_actuator_firmware(3)
+
+    assert transport.writes == ["DT0 3"]
+    assert detection.state is ActuatorState.ERROR
+
+
+def test_conditioned_firmware_detection_uses_dt1_command():
+    transport = FakeTransport(
+        ["OK:ACT>3,BASE>0.10,FWD>0.50,DELTA>0.40,STATE>READY"]
+    )
+    board = Lansing(transport=transport)
+
+    detection = board.detect_actuator_firmware_conditioned(3)
+
+    assert transport.writes == ["DT1 3"]
+    assert detection.state is ActuatorState.READY
+
+
 def test_platform_diagnostic_lines_do_not_break_protocol_responses():
     diagnostic = "E (30797) wifi:sta is connecting, cannot set config"
     transport = FakeTransport(
@@ -45,6 +103,18 @@ def test_platform_diagnostic_lines_do_not_break_protocol_responses():
 
     assert board.version()["FW"] == "Lansing"
     assert board.debug_lines == (diagnostic,)
+
+
+def test_ready_banner_does_not_replace_first_command_response():
+    transport = FakeTransport(
+        ["OK:READY", "OK:FW>Lansing,VERSION>0.1,PROTO>0.1"]
+    )
+    ready_lines = []
+    board = Lansing(transport=transport, debug_callback=ready_lines.append)
+
+    assert board.version()["FW"] == "Lansing"
+    assert ready_lines == ["OK:READY"]
+    assert board.debug_lines == ("OK:READY",)
 
 
 def test_lansing_default_timeout_allows_slow_board_operations(monkeypatch):
@@ -338,6 +408,35 @@ def test_lansing_typed_config_helpers():
         "CFG DEBUG ON",
     ]
 
+
+def test_detection_threshold_config_helpers():
+    transport = FakeTransport(
+        [
+            "OK:DET_MIN>0.20",
+            "OK:CFG_DET_MIN",
+            "OK:DT0_ERR>10.00",
+            "OK:CFG_DT0_ERR",
+            "OK:DT1_ERR>3.00",
+            "OK:CFG_DT1_ERR",
+        ]
+    )
+    board = Lansing(transport=transport)
+
+    assert board.detection_current_limit_ma() == pytest.approx(0.20)
+    assert board.detection_current_limit_ma(0.34) == pytest.approx(0.34)
+    assert board.dt0_error_threshold_ma() == pytest.approx(10.0)
+    assert board.dt0_error_threshold_ma(12.0) == pytest.approx(12.0)
+    assert board.dt1_error_threshold_ma() == pytest.approx(3.0)
+    assert board.dt1_error_threshold_ma(4.0) == pytest.approx(4.0)
+    assert transport.writes == [
+        "CFG DET_MIN",
+        "CFG DET_MIN 0.34",
+        "CFG DT0_ERR",
+        "CFG DT0_ERR 12.0",
+        "CFG DT1_ERR",
+        "CFG DT1_ERR 4.0",
+    ]
+
 def test_lansing_actuators_start_unknown():
     board = Lansing(transport=FakeTransport())
 
@@ -544,6 +643,9 @@ def test_lansing_initialize_runs_dashboard_sequence_and_returns_state(monkeypatc
             "OK:217.87",
             "OK:CFG_SAFE",
             "OK:OUT",
+            "OK:0.80",
+            "OK:OUT",
+            "OK:0.82",
             "OK:OUT",
             "OK:CFG_SAFE",
             "OK:ACT>4,BASE>0.88,FWD>1.12,DIS>0.95",
@@ -563,7 +665,56 @@ def test_lansing_initialize_runs_dashboard_sequence_and_returns_state(monkeypatc
         "VLT",
         "CFG SAFE OFF",
         "OUT 4 0 0",
+        "CUR",
+        "OUT 4 0 0",
+        "CUR",
         "OUT 4 0 0",
         "CFG SAFE ON",
         "DIA 4",
     ]
+
+
+def test_initialize_reports_each_voltage_as_it_is_sent(monkeypatch):
+    transport = FakeTransport(
+        [
+            "OK:217.87",
+            "OK:CFG_SAFE",
+            "OK:OUT",
+            "OK:1.00",
+            "OK:OUT", "OK:1.10",
+            "OK:OUT", "OK:0.90",
+            "OK:OUT", "OK:1.20",
+            "OK:OUT", "OK:1.00",
+            "OK:OUT",
+            "OK:CFG_SAFE",
+            "OK:ACT>4,BASE>0.88,FWD>1.12,DIS>0.95",
+        ]
+    )
+    board = Lansing(transport=transport)
+    board._actuator_states[4] = ActuatorState.ERROR
+    board.initialization_stages_v = (25.0,)
+    board.initialization_stage_duration_s = 1.1
+    board.initialization_phase_interval_s = 0.5
+    clock = [0.0]
+
+    monkeypatch.setattr("fluid_reality.boards.board.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        "fluid_reality.boards.board.time.sleep",
+        lambda duration: clock.__setitem__(0, clock[0] + duration),
+    )
+    progress = []
+
+    board.initialize(4, progress_callback=progress.append)
+
+    assert [item["sent_voltage"] for item in progress] == [0.0, 25.0, -25.0, 25.0, 0.0]
+    assert [item["phase"] for item in progress] == [
+        "baseline",
+        "positive",
+        "negative",
+        "positive",
+        "off",
+    ]
+    assert [item["delta_ma"] for item in progress if "delta_ma" in item] == pytest.approx(
+        [0.10, 0.20]
+    )
+    assert all(item["phase_interval_s"] == 0.5 for item in progress)

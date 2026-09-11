@@ -1,6 +1,10 @@
-# Lansing Simulator Designer
+# Fluid Reality Simulator Designer
 
-Configuration designer and raw-TCP software Lansing board simulator.
+Configuration designer and raw-TCP software board simulator. Choose the Lansing
+24-actuator profile or Rockford eight-actuator profile in the designer toolbar.
+The Rockford profile models capabilities, `DT0`/`DT1`, `OUC`, network/AP, and
+Bluetooth configuration and framed firmware updates. USB-only factory reset is
+correctly rejected because the simulator itself is a TCP endpoint.
 
 ## Run
 
@@ -40,6 +44,7 @@ board state and is not stored inside an actuator profile.
 {
   "schema_version": 3,
   "kind": "lansing-simulator-design",
+  "board_type": "rockford",
   "groups": {
     "0": {
       "actuators": {
@@ -57,13 +62,15 @@ greater than their maximum starting current.
 
 ## Run the device simulator
 
-TCP mode exposes the unmodified Lansing byte stream through the SDK's
+TCP mode exposes the selected firmware byte stream through the SDK's
 `TcpDeviceListener`. It works on Windows, macOS, and Linux without virtual COM
 drivers or PTYs. Start the simulator on the loopback interface:
 
 ```powershell
-python apps/lansing_simulator/simulator.py apps/lansing_simulator/sample_configs/01_single_actuator.json --tcp 127.0.0.1:8765
+python apps/lansing_simulator/simulator.py apps/lansing_simulator/sample_configs/01_single_actuator.json --tcp 127.0.0.1:49765
 ```
+
+To run the Rockford profile directly, add `--board rockford`.
 
 Before launching an SDK application, map a selectable port alias to the TCP
 endpoint in the same environment. The application still calls `Lansing(port)`
@@ -72,28 +79,28 @@ normally, and only the mapped alias is redirected.
 PowerShell:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 python existing_application.py
 ```
 
 Command Prompt:
 
 ```bat
-set FLUID_REALITY_VIRTUAL_PORTS=COM66=tcp://127.0.0.1:8765
+set FLUID_REALITY_VIRTUAL_PORTS=COM66=tcp://127.0.0.1:49765
 python existing_application.py
 ```
 
 macOS/Linux:
 
 ```bash
-export FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+export FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 python existing_application.py
 ```
 
 Multiple aliases can be separated with semicolons:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765;COM67=tcp://127.0.0.1:8766"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765;COM67=tcp://127.0.0.1:8766"
 ```
 
 Keep the value quoted in macOS/Linux shells because an unquoted semicolon
@@ -115,9 +122,11 @@ fraction times its evolving current, followed by configured noise. Forward
 drive reduces actuator current by the configured per-volt, per-second running
 rate down to the minimum. Offline and discharge time recover current at the
 offline rate up to the maximum starting current. Text `ACT`, binary stream,
-manual `OUT`, `DIA`, and `INI` activation paths are represented.
+manual `OUT`, `DIA`, and `INI` activation paths are represented. The Rockford
+profile also exposes its direct top/digital-bottom `OUC` path and two-stage
+detection protocol.
 
-The simulator requires `fluid-reality>=0.2.0` for virtual-port aliases and the
+The simulator requires `fluid-reality>=0.2.1` for virtual-port aliases and the
 raw TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
 access is required.
 

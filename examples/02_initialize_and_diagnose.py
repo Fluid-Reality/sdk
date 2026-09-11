@@ -1,39 +1,42 @@
-"""Detect and initialize one actuator with the SDK stateful workflow."""
+"""Detect, initialize when needed, and report one actuator's current delta."""
 
 from __future__ import annotations
 
 import argparse
 
-from fluid_reality import ActuatorState, Lansing
+from fluid_reality import ActuatorState
+
+from _common import add_connection_arguments, connect_power, open_board, shutdown_power
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("port", help="Serial port, for example COM5")
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_connection_arguments(parser)
     parser.add_argument("--actuator", type=int, default=0)
     args = parser.parse_args()
 
-    with Lansing(args.port) as board:
-        board.psu_on()
-        board.psc_on()
+    with open_board(args) as board:
+        connect_power(board)
+        try:
+            state = board.detect(args.actuator)
+            if state is ActuatorState.ERROR:
+                state = board.initialize(args.actuator)
+            if state is not ActuatorState.READY:
+                raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
 
-        state = board.detect(args.actuator)
-        if state is ActuatorState.ERROR:
-            state = board.initialize(args.actuator)
-        if state is not ActuatorState.READY:
-            raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
+            diagnosis = board.last_detection(args.actuator)
+            if diagnosis is None:
+                raise RuntimeError("No actuator detection result is available")
 
-        diagnosis = board.last_detection(args.actuator)
-        if diagnosis is None:
-            raise RuntimeError("No actuator detection result is available")
-
-        print(f"actuator: {diagnosis.actuator}")
-        print(f"baseline: {diagnosis.baseline_ma:.2f} mA")
-        print(f"forward: {diagnosis.forward_ma:.2f} mA")
-        print(f"discharge: {diagnosis.discharge_ma:.2f} mA")
-        print(f"state: {state.value}")
+            print(f"actuator: {diagnosis.actuator}")
+            print(f"baseline: {diagnosis.baseline_ma:.2f} mA")
+            print(f"forward: {diagnosis.forward_ma:.2f} mA")
+            print(f"discharge: {diagnosis.discharge_ma:.2f} mA")
+            print(f"delta: {diagnosis.delta_ma:.2f} mA")
+            print(f"state: {state.value}")
+        finally:
+            shutdown_power(board)
 
 
 if __name__ == "__main__":
     main()
-

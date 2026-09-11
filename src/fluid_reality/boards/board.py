@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import struct
 import time
+import zlib
 from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +32,7 @@ class Diagnosis:
 
 class ActuatorState(str, Enum):
     UNKNOWN = "Unknown"
+    PRESENT = "Present"
     READY = "Ready"
     ERROR = "Error"
     NOT_CONNECTED = "Not connected"
@@ -68,6 +72,13 @@ class LansingConfig:
     debug: bool
 
 
+@dataclass(frozen=True)
+class FirmwareUpdateResult:
+    path: Path
+    size: int
+    sha256: str
+
+
 class Board(TransportBoard):
     """Common command and actuator functionality for Fluid Reality boards."""
 
@@ -83,6 +94,7 @@ class Board(TransportBoard):
     initialization_stages_v = (25.0, 50.0, 100.0, 200.0)
     initialization_stage_duration_s = 30.0
     initialization_phase_interval_s = 0.5
+    direct_top_bottom_output = False
 
     @classmethod
     def from_connection_file(cls, path: str | Path, **overrides):
@@ -149,6 +161,79 @@ class Board(TransportBoard):
         )
         return responses
 
+    def update_firmware(
+        self,
+        path: str | Path,
+        *,
+        progress: Callable[[int, int], None] | None = None,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> FirmwareUpdateResult:
+        """Install an ESP32 application image through USB serial or TCP/TLS.
+
+        The board writes framed chunks to its inactive OTA slot. Each frame is
+        protected by CRC-32 and the board verifies the complete SHA-256 before
+        selecting the image for the next boot.
+        """
+
+        image_path = Path(path).expanduser().resolve()
+        if not image_path.is_file():
+            raise FileNotFoundError(f"Firmware image not found: {image_path}")
+        endpoint = str(getattr(self.transport, "endpoint", ""))
+        if endpoint.lower().startswith("ble://") or "bluetooth" in type(self.transport).__name__.lower():
+            raise ValueError("Firmware update is available over USB serial or TCP/TLS, not Bluetooth.")
+
+        image_size = image_path.stat().st_size
+        if image_size <= 0:
+            raise ValueError("Firmware image is empty.")
+        digest = hashlib.sha256()
+        with image_path.open("rb") as image:
+            for chunk in iter(lambda: image.read(1024 * 1024), b""):
+                digest.update(chunk)
+        sha256 = digest.hexdigest()
+
+        ready = self.raw_command("FWU", "BEGIN", image_size, sha256)[0]
+        frame_size = int(ready.fields.get("FRAME", "1024"))
+        if frame_size <= 0 or frame_size > 4096:
+            raise ProtocolError(f"Invalid firmware-update frame size: {frame_size}")
+
+        written = 0
+        sequence = 0
+        if progress is not None:
+            progress(0, image_size)
+        try:
+            with image_path.open("rb") as image:
+                while chunk := image.read(frame_size):
+                    if should_abort is not None and should_abort():
+                        abort_header = struct.pack("<IH", 0xFFFFFFFF, 0)
+                        self.transport.write_bytes(abort_header)
+                        self.protocol.read_result()
+                        raise RuntimeError("Firmware update cancelled.")
+                    header = struct.pack("<IH", sequence, len(chunk))
+                    crc = zlib.crc32(header + chunk) & 0xFFFFFFFF
+                    self.transport.write_bytes(header + chunk + struct.pack("<I", crc))
+                    response = self.protocol.read_result()[0]
+                    acknowledged = int(response.fields.get("SEQ", "-1"))
+                    board_written = int(response.fields.get("WRITTEN", "-1"))
+                    if acknowledged != sequence or board_written != written + len(chunk):
+                        raise ProtocolError(
+                            f"Invalid firmware-update acknowledgement: {response.raw!r}"
+                        )
+                    written = board_written
+                    sequence += 1
+                    if progress is not None:
+                        progress(written, image_size)
+            completed = self.raw_command("FWU", "END")[0]
+            if completed.fields.get("STATE") != "VERIFIED":
+                raise ProtocolError(f"Firmware was not verified: {completed.raw!r}")
+        except Exception:
+            if written < image_size:
+                try:
+                    self.raw_command("FWU", "ABORT")
+                except Exception:
+                    pass
+            raise
+        return FirmwareUpdateResult(path=image_path, size=image_size, sha256=sha256)
+
     def drain_input(self) -> tuple[str, ...]:
         drain = getattr(self.transport, "drain_lines", None)
         if drain is None:
@@ -181,6 +266,11 @@ class Board(TransportBoard):
 
     def version(self) -> dict[str, str]:
         return self.raw_command("VER")[0].fields
+
+    def capabilities(self) -> dict[str, str]:
+        """Return the feature flags reported by the firmware ``CAP`` command."""
+
+        return self.raw_command("CAP")[0].fields
 
     def firmware_version(self) -> LansingVersion:
         fields = self.version()
@@ -295,6 +385,79 @@ class Board(TransportBoard):
     def set_manual_output(self, actuator: int, positive: int, negative: int) -> None:
         self.manual_output(actuator, positive, negative)
 
+    def manual_output_current(
+        self,
+        actuator: int,
+        top: int,
+        bottom: int,
+        measurement_ms: int,
+    ) -> float:
+        """Set Rockford TOP/BOTTOM output and measure current over an interval."""
+        self._validate_actuator(actuator)
+        self._validate_output(top)
+        if not isinstance(bottom, int) or isinstance(bottom, bool) or bottom not in (0, 1):
+            raise ValueError("bottom must be 0 or 1")
+        if measurement_ms < 1:
+            raise ValueError("measurement_ms must be >= 1")
+
+        self.debug(
+            "manual_output_current.request",
+            actuator=actuator,
+            top=top,
+            bottom=bottom,
+            measurement_ms=measurement_ms,
+        )
+        response = self.raw_command(
+            "OUC", actuator, top, bottom, measurement_ms
+        )[0]
+        try:
+            current_ma = float(response.fields["CUR"])
+            reported_time_ms = int(response.fields["TIME"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProtocolError(f"Invalid OUC response: {response.raw}") from exc
+        if reported_time_ms != measurement_ms:
+            raise ProtocolError(
+                "OUC measurement interval mismatch: "
+                f"requested {measurement_ms} ms, received {reported_time_ms} ms"
+            )
+        self.debug(
+            "manual_output_current.done",
+            actuator=actuator,
+            current_ma=current_ma,
+            measurement_ms=reported_time_ms,
+        )
+        return current_ma
+
+    def _initialization_output_current(
+        self,
+        actuator: int,
+        output_value: int,
+        phase: str,
+        measurement_ms: int,
+    ) -> float:
+        if self.direct_top_bottom_output:
+            if phase == "positive":
+                top, bottom = output_value, 0
+            elif phase == "negative":
+                top, bottom = self.max_output - output_value, 1
+            else:
+                top, bottom = 0, 0
+            return self.manual_output_current(
+                actuator, top, bottom, measurement_ms
+            )
+        self._set_initialization_output(actuator, output_value, phase)
+        return self.current()
+
+    def _set_initialization_output(
+        self, actuator: int, output_value: int, phase: str
+    ) -> None:
+        if phase == "positive":
+            self.set_manual_output(actuator, output_value, 0)
+        elif phase == "negative":
+            self.set_manual_output(actuator, 0, output_value)
+        else:
+            self.set_manual_output(actuator, 0, 0)
+
     def get_manual_output(self, actuator: int) -> ManualOutput:
         output = self.manual_output(actuator)
         if output is None:
@@ -336,6 +499,61 @@ class Board(TransportBoard):
     def detect(self, actuator: int) -> ActuatorState:
         detection = self.detect_actuator(actuator)
         return detection.state
+
+    def detect_actuator_firmware(self, actuator: int) -> ActuatorDetection:
+        """Run the firmware's initial detection stage for one actuator."""
+
+        self._validate_actuator(actuator)
+        response = self.raw_command("DT0", actuator)[0]
+        return self._detection_from_firmware_response(response, actuator)
+
+    def detect_actuator_firmware_conditioned(
+        self, actuator: int
+    ) -> ActuatorDetection:
+        """Run the firmware's conditioned detection stage after a DT0 result."""
+
+        self._validate_actuator(actuator)
+        response = self.raw_command("DT1", actuator)[0]
+        return self._detection_from_firmware_response(response, actuator)
+
+    def detect_all_firmware(
+        self,
+        progress_callback: Callable[[ActuatorDetection], None] | None = None,
+    ) -> tuple[ActuatorDetection, ...]:
+        """Run firmware batch detection and publish each result as it arrives."""
+
+        self.debug("detect_firmware.start", actuator_count=self.actuator_count)
+        self.transport.write_line("DT0")
+        baseline_response = self.protocol.read_result(ok_lines=1)[0]
+        if "BASE" not in baseline_response.fields:
+            raise ProtocolError("DT0 batch response did not begin with BASE")
+        try:
+            baseline_ma = float(baseline_response.fields["BASE"])
+        except ValueError as exc:
+            raise ProtocolError("DT0 BASE must be a current in mA") from exc
+
+        detections: list[ActuatorDetection] = []
+        for expected_actuator in range(self.actuator_count):
+            response = self.protocol.read_result(ok_lines=1)[0]
+            detection = self._detection_from_firmware_response(
+                response, expected_actuator, expected_baseline_ma=baseline_ma
+            )
+            detections.append(detection)
+            if progress_callback is not None:
+                progress_callback(detection)
+
+        final_detections = list(detections)
+        for detection in detections:
+            if detection.state is not ActuatorState.PRESENT:
+                continue
+            conditioned = self.detect_actuator_firmware_conditioned(
+                detection.actuator
+            )
+            final_detections[detection.actuator] = conditioned
+            if progress_callback is not None:
+                progress_callback(conditioned)
+        self.debug("detect_firmware.done", detections=tuple(final_detections))
+        return tuple(final_detections)
 
     def detect_actuator(
         self,
@@ -437,7 +655,7 @@ class Board(TransportBoard):
         self,
         actuator: int,
         *,
-        progress_callback: Callable[[dict[str, float | int]], None] | None = None,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> ActuatorState:
         detection = self.initialize_actuator_stateful(
             actuator,
@@ -449,7 +667,7 @@ class Board(TransportBoard):
         self,
         actuator: int,
         *,
-        progress_callback: Callable[[dict[str, float | int]], None] | None = None,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> ActuatorDetection:
         self._validate_actuator(actuator)
         state = self.actuator_state(actuator)
@@ -470,11 +688,28 @@ class Board(TransportBoard):
         stage_duration_s = float(self.initialization_stage_duration_s)
         phase_interval_s = float(self.initialization_phase_interval_s)
         total_duration_s = stage_duration_s * len(stages)
-        start = time.monotonic()
-        next_report_second = -1
-
         try:
             self.safety(False)
+            measurement_ms = max(1, round(phase_interval_s * 1000))
+            baseline_current_ma = self._initialization_output_current(
+                actuator, 0, "off", measurement_ms
+            )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "actuator": actuator,
+                        "elapsed_s": 0.0,
+                        "total_s": total_duration_s,
+                        "stage_index": 0,
+                        "stage_count": len(stages),
+                        "stage_voltage": 0.0,
+                        "sent_voltage": 0.0,
+                        "phase": "baseline",
+                        "phase_interval_s": phase_interval_s,
+                        "output_value": 0,
+                    }
+                )
+            start = time.monotonic()
             for stage_index, target_voltage in enumerate(stages, start=1):
                 output_value = self._voltage_to_output(target_voltage, supply_voltage)
                 self.debug(
@@ -490,17 +725,22 @@ class Board(TransportBoard):
                 while True:
                     now = time.monotonic()
                     stage_elapsed_s = now - stage_start
-                    elapsed_s = now - start
                     if stage_elapsed_s >= stage_duration_s:
                         break
 
                     if now >= next_phase:
                         if phase % 2 == 0:
-                            self.set_manual_output(actuator, output_value, 0)
                             phase_name = "positive"
+                            sent_voltage = target_voltage
                         else:
-                            self.set_manual_output(actuator, 0, output_value)
                             phase_name = "negative"
+                            sent_voltage = -target_voltage
+                        current_ma = self._initialization_output_current(
+                            actuator, output_value, phase_name, measurement_ms
+                        )
+                        sent_elapsed_s = min(
+                            time.monotonic() - start, total_duration_s
+                        )
                         self.debug(
                             "initialize.phase",
                             actuator=actuator,
@@ -508,25 +748,34 @@ class Board(TransportBoard):
                             phase=phase_name,
                             output_value=output_value,
                         )
-                        phase += 1
-                        next_phase = now + phase_interval_s
-
-                    whole_second = int(elapsed_s)
-                    if progress_callback is not None and whole_second > next_report_second:
-                        progress_callback(
-                            {
+                        if progress_callback is not None:
+                            progress = {
                                 "actuator": actuator,
-                                "elapsed_s": min(elapsed_s, total_duration_s),
+                                "elapsed_s": sent_elapsed_s,
                                 "total_s": total_duration_s,
                                 "stage_index": stage_index,
                                 "stage_count": len(stages),
                                 "stage_voltage": target_voltage,
+                                "sent_voltage": sent_voltage,
+                                "phase": phase_name,
+                                "phase_interval_s": phase_interval_s,
                                 "output_value": output_value,
                             }
-                        )
-                        next_report_second = whole_second
+                            if phase_name == "positive":
+                                progress.update(
+                                    {
+                                        "baseline_current_ma": baseline_current_ma,
+                                        "current_ma": current_ma,
+                                        "delta_ma": current_ma - baseline_current_ma,
+                                    }
+                                )
+                            progress_callback(progress)
+                        phase += 1
+                        next_phase = now + phase_interval_s
                     time.sleep(0.05)
-            self.set_manual_output(actuator, 0, 0)
+            self._initialization_output_current(
+                actuator, 0, "off", measurement_ms
+            )
         finally:
             try:
                 self.set_manual_output(actuator, 0, 0)
@@ -543,6 +792,9 @@ class Board(TransportBoard):
                     "stage_index": len(stages),
                     "stage_count": len(stages),
                     "stage_voltage": stages[-1],
+                    "sent_voltage": 0.0,
+                    "phase": "off",
+                    "phase_interval_s": phase_interval_s,
                     "output_value": self._voltage_to_output(stages[-1], supply_voltage),
                 }
             )
@@ -620,6 +872,37 @@ class Board(TransportBoard):
         self.config("DEBUG", self._bool_config_value(enabled))
         return self._state_to_bool(enabled)
 
+    @staticmethod
+    def _validate_positive_threshold(value: float, name: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed) or parsed <= 0:
+            raise ValueError(f"{name} must be greater than zero")
+        return parsed
+
+    def detection_current_limit_ma(self, value: float | None = None) -> float:
+        if value is None:
+            return float(self.config("DET_MIN"))
+        parsed = self._validate_positive_threshold(value, "detection current limit")
+        self.config("DET_MIN", parsed)
+        self.not_connected_delta_ma = parsed
+        return parsed
+
+    def dt0_error_threshold_ma(self, value: float | None = None) -> float:
+        if value is None:
+            return float(self.config("DT0_ERR"))
+        parsed = self._validate_positive_threshold(value, "DT0 error threshold")
+        self.config("DT0_ERR", parsed)
+        self.initial_detection_error_delta_ma = parsed
+        return parsed
+
+    def dt1_error_threshold_ma(self, value: float | None = None) -> float:
+        if value is None:
+            return float(self.config("DT1_ERR"))
+        parsed = self._validate_positive_threshold(value, "DT1 error threshold")
+        self.config("DT1_ERR", parsed)
+        self.error_delta_ma = parsed
+        return parsed
+
     def enable_firmware_debug(self) -> None:
         self.firmware_debug(True)
 
@@ -689,6 +972,10 @@ class Board(TransportBoard):
             if not math.isfinite(detection_limit) or detection_limit <= 0:
                 raise ProtocolError("STS DET_MIN must be greater than zero")
             self.not_connected_delta_ma = detection_limit
+        if "DT0_ERR" in summary:
+            self.initial_detection_error_delta_ma = float(summary["DT0_ERR"])
+        if "DT1_ERR" in summary:
+            self.error_delta_ma = float(summary["DT1_ERR"])
         actuator_values = self._int_tuple(
             sections["ACT_VALUES"].payload.removeprefix("ACT_VALUES>")
         )
@@ -763,6 +1050,15 @@ class Board(TransportBoard):
                 "discharge_ms": int(summary["CFG_DIS"]),
                 "safe": summary["SAFE"],
                 "debug": summary["DEBUG"],
+                **(
+                    {
+                        "detection_current_limit_ma": detection_limit,
+                        "dt0_error_threshold_ma": self.initial_detection_error_delta_ma,
+                        "dt1_error_threshold_ma": self.error_delta_ma,
+                    }
+                    if "DET_MIN" in summary
+                    else {}
+                ),
             },
             "stream": summary["STREAM"],
             "detection_current_limit_ma": detection_limit,
@@ -880,6 +1176,58 @@ class Board(TransportBoard):
         self._actuator_states[diagnosis.actuator] = detection.state
         self._actuator_detections[diagnosis.actuator] = detection
         self.debug("actuator_state.updated", actuator=diagnosis.actuator, state=detection.state.value)
+        return detection
+
+    def _detection_from_firmware_response(
+        self,
+        response: Response,
+        expected_actuator: int,
+        *,
+        expected_baseline_ma: float | None = None,
+    ) -> ActuatorDetection:
+        required = {"ACT", "BASE", "FWD", "DELTA", "STATE"}
+        missing = required.difference(response.fields)
+        if missing:
+            raise ProtocolError(
+                "DT0 response missing fields " + ", ".join(sorted(missing))
+            )
+        try:
+            actuator = int(response.fields["ACT"])
+            baseline_ma = float(response.fields["BASE"])
+            forward_ma = float(response.fields["FWD"])
+            delta_ma = float(response.fields["DELTA"])
+        except ValueError as exc:
+            raise ProtocolError("DT0 response contains an invalid number") from exc
+        if actuator != expected_actuator:
+            raise ProtocolError(
+                f"DT0 returned actuator {actuator}; expected {expected_actuator}"
+            )
+        if expected_baseline_ma is not None and not math.isclose(
+            baseline_ma, expected_baseline_ma, abs_tol=0.011
+        ):
+            raise ProtocolError("DT0 actuator result does not match the shared baseline")
+
+        state_name = response.fields["STATE"].upper()
+        states = {
+            "PRESENT": ActuatorState.PRESENT,
+            "READY": ActuatorState.READY,
+            "NOT_CONNECTED": ActuatorState.NOT_CONNECTED,
+            "ERROR": ActuatorState.ERROR,
+        }
+        if state_name not in states:
+            raise ProtocolError(f"DT0 returned unknown state {state_name!r}")
+        detection = ActuatorDetection(
+            actuator=actuator,
+            state=states[state_name],
+            baseline_ma=baseline_ma,
+            forward_ma=forward_ma,
+            discharge_ma=0.0,
+            delta_ma=delta_ma,
+            initial_forward_ma=forward_ma,
+            initial_delta_ma=delta_ma,
+        )
+        self._actuator_states[actuator] = detection.state
+        self._actuator_detections[actuator] = detection
         return detection
 
     def _detection_from_diagnosis(self, diagnosis: Diagnosis) -> ActuatorDetection:

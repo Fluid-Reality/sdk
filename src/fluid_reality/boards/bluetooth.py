@@ -17,17 +17,23 @@ class BluetoothBoard(Board):
         return self.raw_command("BLT", "ON" if enabled else "OFF")[0].fields
 
     def set_bluetooth_name(self, name: str) -> dict[str, str]:
-        value = str(name).strip()
+        """Persist the suffix of the firmware-enforced ``FR-`` name."""
+
+        suffix = str(name).strip()
         if (
-            not value
-            or len(value) > 31
-            or not value.isascii()
-            or not all(character.isalnum() or character in "-_" for character in value)
+            not suffix
+            or len(suffix) > 28
+            or not suffix.isascii()
+            or suffix.upper().startswith("FR-")
+            or not all(
+                character.isalnum() or character in "-_" for character in suffix
+            )
         ):
             raise ValueError(
-                "Bluetooth name must be 1-31 ASCII letters, digits, hyphens, or underscores"
+                "Bluetooth name suffix must be 1-28 ASCII letters, digits, "
+                "hyphens, or underscores"
             )
-        return self.raw_command("BLT", "NAME", value)[0].fields
+        return self.raw_command("BLT", "NAME", suffix)[0].fields
 
     def set_bluetooth_security(self, enabled: bool) -> dict[str, str]:
         return self.raw_command("BLT", "SEC", "ON" if enabled else "OFF")[0].fields

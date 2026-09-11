@@ -3,12 +3,15 @@
 `Device Bridge` is a small terminal-only serial-to-TCP/TLS bridge. It can:
 
 - trace exact TX/RX traffic while an SDK application controls a physical board;
-- make a physical Lansing board available to an SDK application on another computer;
-- capture binary-safe hexadecimal and ASCII logs for troubleshooting.
+- make a serial Fluid Reality board available to an SDK application on another
+  computer;
+- capture binary-safe hexadecimal and ASCII logs for troubleshooting;
 - require the same `NET AUTH` token handshake used by Fluid Reality network boards;
 - encrypt the client connection with a PEM TLS certificate and private key.
 
-The bridge forwards ordinary firmware traffic unchanged. It intercepts every
+The bridge is transport-transparent: it does not translate Lansing commands,
+Rockford commands, binary streaming, or firmware-update frames. It forwards
+ordinary firmware traffic unchanged. It intercepts every
 `NET` command and processes it locally, so a serial-only board behaves like a
 network-capable board without receiving commands it does not implement.
 
@@ -40,8 +43,9 @@ local date/time suffix such as
 written atomically.
 
 The bridge prints the exact `FLUID_REALITY_VIRTUAL_PORTS` command to use before
-starting the dashboard, terminal, tests, or another SDK application. Existing calls
-such as `Lansing("COM66")` require no code changes.
+starting the dashboard, terminal, tests, or another SDK application. Existing
+calls such as `Lansing("COM66")` or `Rockford("COM66")` require no code changes;
+the client must still choose the correct hardware profile.
 
 Useful examples:
 
@@ -53,16 +57,16 @@ python apps\device_bridge\device_bridge.py COM9 --log trace.log
 python apps\device_bridge\device_bridge.py COM9 --baud 115200 --alias LAB_BOARD --trace hex --log trace.log --append
 
 # Expose the board to another computer on a trusted LAN
-python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:8765 --trace both
+python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:49765 --trace both
 
 # Authenticated TCP
-python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:8765 --token bridge-secret
+python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:49765 --token bridge-secret
 
 # Disable a token saved previously in the configuration file
 python apps\device_bridge\device_bridge.py COM9 --no-token
 
 # Authenticated and encrypted TLS
-python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:8765 `
+python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:49765 `
   --token bridge-secret `
   --tls-cert bridge-cert.pem `
   --tls-key bridge-key.pem
@@ -72,7 +76,7 @@ For remote use, set the client computer's mapping to the bridge computer's reach
 address, for example:
 
 ```text
-FLUID_REALITY_VIRTUAL_PORTS=REMOTE_BOARD=tls://192.168.1.50:8765
+FLUID_REALITY_VIRTUAL_PORTS=REMOTE_BOARD=tls://192.168.1.50:49765
 ```
 
 Only one SDK client controls the serial device at a time. After disconnection, the
@@ -87,13 +91,17 @@ Raw unauthenticated TCP remains available when the security options are omitted 
 backward-compatible loopback testing. The bridge consumes a configured `NET AUTH`
 handshake itself and never forwards the token command to the serial firmware.
 
+The bridge's own `NET` configuration describes the host listener, not the
+attached board's Wi-Fi radio. Host IP assignment and Wi-Fi association remain
+externally managed. Factory reset is not proxied as a bridge setting.
+
 Python code that starts a bridge can open its locally configurable board proxy
 over either protocol:
 
 ```python
 from apps.device_bridge.bridge import DeviceBridge
 
-with DeviceBridge("COM9", port=8765, network_token="bridge-secret") as bridge:
+with DeviceBridge("COM9", port=49765, network_token="bridge-secret") as bridge:
     board = bridge.open_board(timeout=2.0)
     try:
         print(board.firmware_version())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import socket
+import ssl
 import threading
 import time
 from contextlib import contextmanager
@@ -72,8 +73,40 @@ def test_tcp_redirect_preserves_read_timeout(monkeypatch):
                 board.version()
 
 
+def test_tcp_connect_timeout_is_separate_from_command_timeout(monkeypatch):
+    opened: dict[str, object] = {}
+
+    class FakeSocket:
+        timeout = None
+
+        def settimeout(self, value):
+            self.timeout = value
+
+        def close(self):
+            pass
+
+    fake_socket = FakeSocket()
+
+    def create_connection(address, *, timeout):
+        opened.update(address=address, timeout=timeout)
+        return fake_socket
+
+    monkeypatch.setattr(
+        "fluid_reality.transport.socket.create_connection", create_connection
+    )
+
+    transport = SerialTransport(
+        "tcp://127.0.0.1:49765", timeout=7.0, connect_timeout=0.4
+    )
+    try:
+        assert opened == {"address": ("127.0.0.1", 49765), "timeout": 0.4}
+        assert fake_socket.timeout == 7.0
+    finally:
+        transport.close()
+
+
 def test_tcp_redirect_rejects_invalid_endpoint(monkeypatch):
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=http://127.0.0.1:8765")
+    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=http://127.0.0.1:49765")
 
     with pytest.raises(TransportError, match="expected tcp://host:port"):
         Lansing("COM66")
@@ -83,7 +116,7 @@ def test_tcp_redirect_rejects_invalid_endpoint(monkeypatch):
     "mapping",
     [
         "COM66=tcp://127.0.0.1:not-a-port",
-        "COM66=tcp://127.0.0.1:8765/path",
+        "COM66=tcp://127.0.0.1:49765/path",
         "missing-equals-sign",
     ],
 )
@@ -122,7 +155,7 @@ def test_list_ports_combines_serial_ports_and_endpoint_aliases(monkeypatch):
     )
     monkeypatch.setenv(
         VIRTUAL_PORTS_ENV,
-        "COM66=tcp://127.0.0.1:8765;SIM2=tcp://127.0.0.1:8766",
+        "COM66=tcp://127.0.0.1:49765;SIM2=tcp://127.0.0.1:8766",
     )
 
     assert list_ports() == ["COM1", "COM2", "COM66", "SIM2"]
@@ -152,7 +185,7 @@ def test_unmapped_com_port_uses_physical_serial(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=tcp://127.0.0.1:8765")
+    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=tcp://127.0.0.1:49765")
     monkeypatch.setattr("serial.Serial", FakeSerial)
 
     transport = SerialTransport("COM9", timeout=0.5)
@@ -258,10 +291,84 @@ def test_tls_transport_accepts_a_pinned_sha256_fingerprint(monkeypatch):
     fingerprint = hashlib.sha256(certificate_der).hexdigest()
 
     transport = SerialTransport(
-        "tls://rockford.local:8765",
+        "tls://rockford.local:49765",
         tls_fingerprint=fingerprint,
         timeout=0.5,
     )
+    transport.close()
+
+
+def test_tls_transport_can_skip_hostname_check_without_disabling_trust(monkeypatch):
+    class FakeSocket:
+        def settimeout(self, _value):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeContext:
+        def __init__(self):
+            self.check_hostname = True
+
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            assert server_hostname == "10.0.6.143"
+            return raw_socket
+
+    context = FakeContext()
+    monkeypatch.setattr(
+        "fluid_reality.transport.socket.create_connection",
+        lambda *_args, **_kwargs: FakeSocket(),
+    )
+    monkeypatch.setattr(
+        "fluid_reality.transport.ssl.create_default_context",
+        lambda **_kwargs: context,
+    )
+
+    transport = SerialTransport(
+        "tls://10.0.6.143:49765",
+        tls_ca_file="shared.pem",
+        tls_check_hostname=False,
+        timeout=0.5,
+    )
+
+    assert context.check_hostname is False
+    transport.close()
+
+
+def test_tls_transport_can_encrypt_without_verifying_a_certificate(monkeypatch):
+    class FakeSocket:
+        def settimeout(self, _value):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeContext:
+        def __init__(self):
+            self.check_hostname = True
+            self.verify_mode = None
+
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            assert server_hostname == "10.0.6.143"
+            return raw_socket
+
+    context = FakeContext()
+    monkeypatch.setattr(
+        "fluid_reality.transport.socket.create_connection",
+        lambda *_args, **_kwargs: FakeSocket(),
+    )
+    monkeypatch.setattr(
+        "fluid_reality.transport.ssl.SSLContext", lambda _protocol: context,
+    )
+
+    transport = SerialTransport(
+        "tls://10.0.6.143:49765",
+        tls_verify_certificate=False,
+        timeout=0.5,
+    )
+
+    assert context.check_hostname is False
+    assert context.verify_mode == ssl.CERT_NONE
     transport.close()
 
 
@@ -288,7 +395,7 @@ def test_tls_transport_rejects_the_wrong_pinned_fingerprint(monkeypatch):
 
     with pytest.raises(TransportError, match="fingerprint does not match"):
         SerialTransport(
-            "tls://rockford.local:8765",
+            "tls://rockford.local:49765",
             tls_fingerprint="00" * 32,
             timeout=0.5,
         )

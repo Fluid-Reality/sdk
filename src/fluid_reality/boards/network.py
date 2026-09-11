@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import re
 from dataclasses import dataclass
 
@@ -272,6 +273,68 @@ class WifiBoard(ConfigurableNetworkBoard):
     """Wi-Fi scanning, association, and credential-management capability."""
 
     network_interface_capability = "WIFI"
+
+    def wifi_mode(self) -> str:
+        """Return ``CLIENT`` or ``ACCESS_POINT`` for the active Wi-Fi mode."""
+
+        fields = self.raw_command("NET", "MODE")[0].fields
+        return fields.get("MODE", "CLIENT").upper()
+
+    def set_wifi_mode(self, mode: str) -> dict[str, str]:
+        """Select persistent client or access-point operation."""
+
+        normalized = str(mode).strip().upper().replace("-", "_").replace(" ", "_")
+        normalized = {"AP": "ACCESS_POINT", "STATION": "CLIENT"}.get(
+            normalized, normalized
+        )
+        if normalized not in {"CLIENT", "ACCESS_POINT"}:
+            raise ValueError("Wi-Fi mode must be CLIENT or ACCESS_POINT")
+        return self.raw_command("NET", "MODE", normalized)[0].fields
+
+    def access_point_status(self) -> dict[str, str]:
+        """Return the saved access-point configuration and live state."""
+
+        return self.raw_command("NET", "AP", "STATUS")[0].fields
+
+    def configure_access_point(
+        self,
+        ssid: str,
+        password: str | None = None,
+        *,
+        channel: int = 1,
+    ) -> dict[str, str]:
+        """Save AP credentials and channel, restarting AP mode when active."""
+
+        if not ssid or len(ssid.encode("utf-8")) > 32:
+            raise ValueError("access-point SSID must contain 1 to 32 UTF-8 bytes")
+        if not 1 <= int(channel) <= 13:
+            raise ValueError("access-point channel must be between 1 and 13")
+        encoded_ssid = base64.b64encode(ssid.encode("utf-8")).decode("ascii")
+        if password is None or password == "":
+            return self.raw_command(
+                "NET", "AP", "CONFIG", encoded_ssid, "OPEN", int(channel)
+            )[0].fields
+        if not 8 <= len(password.encode("utf-8")) <= 63:
+            raise ValueError("access-point password must contain 8 to 63 UTF-8 bytes")
+        encoded_password = base64.b64encode(password.encode("utf-8")).decode("ascii")
+        return self.raw_command(
+            "NET", "AP", "CONFIG", encoded_ssid, "PSK", encoded_password,
+            int(channel),
+        )[0].fields
+
+    def configure_access_point_ipv4(
+        self, address: str, subnet: str
+    ) -> dict[str, str]:
+        """Set the persistent address and subnet used by access-point mode."""
+
+        normalized_address = str(ipaddress.IPv4Address(address.strip()))
+        normalized_subnet = str(ipaddress.IPv4Address(subnet.strip()))
+        ipaddress.IPv4Network(f"0.0.0.0/{normalized_subnet}")
+        if normalized_address == "0.0.0.0" or normalized_subnet == "0.0.0.0":
+            raise ValueError("access-point address and subnet must be non-zero")
+        return self.raw_command(
+            "NET", "AP", "IP", normalized_address, normalized_subnet
+        )[0].fields
 
     def start_wifi_scan(self) -> dict[str, str]:
         return self.raw_command("NET", "SCAN")[0].fields

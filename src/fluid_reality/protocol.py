@@ -123,6 +123,16 @@ class TextProtocol:
                     self.debug_callback(line)
                 continue
 
+            # Boards may finish booting immediately after a serial connection
+            # opens. Their READY banner is asynchronous startup information,
+            # not the response to the command currently awaiting a result.
+            if line == "OK:READY":
+                self.debug_lines.append(line)
+                self.debug_out.emit("firmware", "ready", line=line)
+                if self.debug_callback is not None:
+                    self.debug_callback(line)
+                continue
+
             # ESP-IDF can emit driver diagnostics on the USB serial stream. They
             # are out-of-band diagnostics, not command responses, so preserve
             # them as debug lines and continue waiting for the framed OK/ER line.

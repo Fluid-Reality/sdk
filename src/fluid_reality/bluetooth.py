@@ -72,9 +72,15 @@ async def discover_bluetooth_boards_async(
     devices_by_address: dict[str, BluetoothDevice] = {}
     for device, advertisement in found.values():
         name = (advertisement.local_name or device.name or "").strip()
-        if not name.lower().startswith(
-            ("rockford", "lansing", "fluid reality", "fluid-reality")
-        ):
+        manufacturer_data = getattr(advertisement, "manufacturer_data", {}) or {}
+        fluid_reality_identity = any(
+            bytes(payload).startswith(b"FR|")
+            for payload in manufacturer_data.values()
+        )
+        recognized_name = name.lower().startswith(
+            ("fr-", "rockford", "lansing", "fluid reality", "fluid-reality")
+        )
+        if not name or (not recognized_name and not fluid_reality_identity):
             continue
         address = str(device.address)
         # The firmware's default name contains its hardware-derived device ID and

@@ -617,7 +617,7 @@ Main files:
 The SDK is structured so other board wrappers can be added later under `src/fluid_reality/boards`.
 
 Virtual-port mappings use semicolon-separated entries such as
-`COM66=tcp://127.0.0.1:8765`. Only the selected alias is redirected; unmapped
+`COM66=tcp://127.0.0.1:49765`. Only the selected alias is redirected; unmapped
 ports remain physical. Device simulators should use `TcpDeviceListener` and
 keep ASCII/binary framing in their own protocol engines.
 

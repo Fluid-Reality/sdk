@@ -1,9 +1,9 @@
-# Lansing Terminal
+# Fluid Reality Terminal
 
-Command-line operator interface for the Fluid Reality Lansing Development Kit.
+Command-line operator interface for Lansing and Rockford boards.
 
 Use the terminal when a graphical desktop is unavailable, from an SSH session,
-or when a scriptable interface is preferable to the Lansing Dashboard. It
+or when a scriptable interface is preferable to the Fluid Reality Dashboard. It
 supports interactive commands, fail-fast command sequences, and
 newline-delimited JSON for automation.
 
@@ -19,7 +19,9 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 - Control the high-voltage power supply and PSU connection independently.
 - Read voltage, current, configuration, status, and runtime counters.
 - Detect individual actuators or eight-actuator groups.
-- Show `Unknown`, `Ready`, `Error`, and `Not connected` actuator states.
+- Show `Unknown`, `Present`, `Ready`, `Error`, and `Not connected` actuator
+  states. `Not connected` is a DT0 result; later diagnosis does not return a
+  previously detected actuator to that state without another DT0 run.
 - Diagnose, initialize, and recover actuators.
 - Run adaptive Fast Init with a configurable current-delta target below the
   `3.0 mA` Error threshold.
@@ -28,6 +30,9 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 - Run continuous square-wave tests with firmware discharge confirmation.
 - Capture SDK and terminal event logs.
 - Emit human-readable text or newline-delimited JSON.
+- Select a Lansing or Rockford hardware profile with `--board`.
+- Inspect Rockford capabilities and configure its network, Wi-Fi, and Bluetooth.
+- Install firmware and perform a confirmation-guarded, USB-only factory reset.
 - Initialize actuators to a target current delta using PowerShell, POSIX shell,
   or Windows batch automation.
 
@@ -72,16 +77,14 @@ python lansing_terminal.py -c "ports"
 Start an interactive session and connect from the terminal:
 
 ```text
-python lansing_terminal.py
-lansing(disconnected)> ports
-lansing(disconnected)> connect <serial-tcp-tls-or-ble-endpoint>
-lansing> psu on
-lansing> voltage
-lansing> psuc on
-lansing> current
-lansing> detect
-lansing> init 0
-lansing> fast_init 0 2.0
+python lansing_terminal.py --board rockford
+rockford(disconnected)> ports
+rockford(disconnected)> connect <serial-tcp-tls-or-ble-endpoint>
+rockford> capabilities
+rockford> network status
+rockford> bluetooth status
+rockford> psu on
+rockford> detect
 ```
 
 Use `init <actuator>` for the staged SDK initialization workflow. Use
@@ -98,7 +101,7 @@ To expose a TCP simulator as a selectable port alias, set
 `FLUID_REALITY_VIRTUAL_PORTS` before starting the terminal:
 
 ```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:8765"
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 python lansing_terminal.py -c "ports"
 ```
 
@@ -106,16 +109,21 @@ Selecting `COM66` connects to TCP; other COM ports remain physical. Multiple
 aliases may be separated by semicolons. A TCP endpoint can also be passed directly:
 
 ```powershell
-python lansing_terminal.py --port tcp://127.0.0.1:8765
+python lansing_terminal.py --port tcp://127.0.0.1:49765
 ```
 
 TLS and Bluetooth endpoints can be passed directly as well. Install the app's
 requirements first so the optional Bluetooth transport is available:
 
 ```powershell
-python lansing_terminal.py --port tls://rockford.local:8765
+python lansing_terminal.py --port tls://rockford.local:49765
 python lansing_terminal.py --port ble://DEVICE-ID
 ```
+
+The default profile remains `lansing` for backward compatibility. Use
+`--board rockford` for its eight-actuator layout, direct top/digital-bottom
+measurements, Wi-Fi/AP and Bluetooth configuration, firmware update, and
+USB-only factory reset. Add `--access-token TOKEN` for authenticated TCP/TLS.
 
 Run a fail-fast command sequence:
 
@@ -166,4 +174,4 @@ behavior.
 - [Fluid Reality SDK overview](../../README.md)
 - [Python SDK API reference](../../docs/api_reference.md)
 - [Lansing Development Kit start-here guide](../../docs/lansing_kit_start_here/README.md)
-- [Lansing Dashboard](../lansing_dashboard/README.md)
+- [Fluid Reality Dashboard](../fluidreality_dashboard/README.md)

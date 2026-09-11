@@ -136,6 +136,41 @@ LANSING_ERROR_INFO: dict[str, ErrorInfo] = {
         "Invalid internal state or failed lower-level validation.",
         "Check actuator number and firmware status. Reboot if state appears inconsistent.",
     ),
+    "OUC_PARAM_COUNT": ErrorInfo(
+        "Output-and-current command received the wrong number of parameters.",
+        "OUC requires actuator, TOP output, BOTTOM state, and measurement time.",
+        "Send OUC actuator top bottom time_ms.",
+    ),
+    "OUC_ACTUATOR": ErrorInfo(
+        "Output-and-current actuator parameter was invalid.",
+        "Actuator was non-numeric, negative, or outside the board's range.",
+        "Use a valid actuator number for this board.",
+    ),
+    "OUC_TOP_VALUE": ErrorInfo(
+        "Output-and-current TOP value was invalid.",
+        "TOP value was non-numeric, negative, or greater than 255.",
+        "Use a value from 0 through 255.",
+    ),
+    "OUC_BOTTOM_VALUE": ErrorInfo(
+        "Output-and-current BOTTOM state was invalid.",
+        "BOTTOM is a digital electrode and accepts only 0 or 1.",
+        "Use 0 for off or 1 for on.",
+    ),
+    "OUC_TIME_VALUE": ErrorInfo(
+        "Output-and-current measurement time was invalid.",
+        "Measurement time was non-numeric or less than one millisecond.",
+        "Use a measurement time of at least 1 ms.",
+    ),
+    "OUC_SAFETY_ON": ErrorInfo(
+        "Output-and-current write was blocked by the safety flag.",
+        "Safety defaults on at boot and blocks direct electrode writes.",
+        "Disable safety only during controlled bench testing.",
+    ),
+    "OUC_FAILED": ErrorInfo(
+        "Output-and-current request was valid but the raw electrode write failed.",
+        "The lower-level output operation refused the requested state.",
+        "Check the actuator number and firmware status.",
+    ),
     "INI_PARAM_COUNT": ErrorInfo(
         "Initialization command received the wrong number of parameters.",
         "No actuator number or more than one parameter was sent.",

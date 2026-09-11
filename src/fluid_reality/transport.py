@@ -84,10 +84,13 @@ class _SocketBackend:
         *,
         timeout: float,
         write_timeout: float | None,
+        connect_timeout: float | None = None,
         tls_ca_file: str | None = None,
         tls_ca_data: str | None = None,
         tls_fingerprint: str | None = None,
         tls_server_hostname: str | None = None,
+        tls_check_hostname: bool = True,
+        tls_verify_certificate: bool = True,
     ) -> None:
         _parse_tcp_endpoint(endpoint, context="TCP endpoint")
         parsed = urlparse(endpoint)
@@ -99,7 +102,7 @@ class _SocketBackend:
         try:
             raw_socket = socket.create_connection(
                 (parsed.hostname, parsed.port),
-                timeout=timeout,
+                timeout=timeout if connect_timeout is None else connect_timeout,
             )
             if parsed.scheme.lower() == "tls":
                 fingerprint_text = (tls_fingerprint or "").strip().lower()
@@ -111,7 +114,9 @@ class _SocketBackend:
                     raise ValueError(
                         "TLS certificate fingerprint must contain 64 SHA-256 hex digits"
                     )
-                if normalized_fingerprint and tls_ca_file is None and tls_ca_data is None:
+                if not tls_verify_certificate or (
+                    normalized_fingerprint and tls_ca_file is None and tls_ca_data is None
+                ):
                     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                     context.check_hostname = False
                     context.verify_mode = ssl.CERT_NONE
@@ -119,6 +124,7 @@ class _SocketBackend:
                     context = ssl.create_default_context(cafile=tls_ca_file)
                     if tls_ca_data is not None:
                         context.load_verify_locations(cadata=tls_ca_data)
+                    context.check_hostname = tls_check_hostname
                 self._socket = context.wrap_socket(
                     raw_socket,
                     server_hostname=tls_server_hostname or parsed.hostname,
@@ -202,7 +208,7 @@ class SerialTransport:
     """Line-oriented serial transport with selective virtual-port routing.
 
     ``FLUID_REALITY_VIRTUAL_PORTS`` maps selected port aliases to TCP or TLS endpoints,
-    for example ``COM66=tls://rockford.local:8765``. Only an exact alias selection is
+    for example ``COM66=tls://rockford.local:49765``. Only an exact alias selection is
     redirected; every other port continues through the physical serial layer.
     """
 
@@ -212,12 +218,15 @@ class SerialTransport:
         *,
         baudrate: int = 115200,
         timeout: float = 1.0,
+        connect_timeout: float | None = None,
         write_timeout: float | None = 1.0,
         network_token: str | None = None,
         tls_ca_file: str | None = None,
         tls_ca_data: str | None = None,
         tls_fingerprint: str | None = None,
         tls_server_hostname: str | None = None,
+        tls_check_hostname: bool = True,
+        tls_verify_certificate: bool = True,
         **serial_kwargs: Any,
     ) -> None:
         aliases = _endpoint_aliases()
@@ -233,11 +242,14 @@ class SerialTransport:
             self._serial = _SocketBackend(
                 selected_endpoint,
                 timeout=timeout,
+                connect_timeout=connect_timeout,
                 write_timeout=write_timeout,
                 tls_ca_file=tls_ca_file,
                 tls_ca_data=tls_ca_data,
                 tls_fingerprint=tls_fingerprint,
                 tls_server_hostname=tls_server_hostname,
+                tls_check_hostname=tls_check_hostname,
+                tls_verify_certificate=tls_verify_certificate,
             )
             if network_token is not None:
                 self._serial.authenticate(network_token)

@@ -44,6 +44,7 @@ class ConnectionProfile:
     tls_certificate: str | None = field(default=None, repr=False)
     tls_certificate_file: str | None = None
     tls_server_hostname: str | None = None
+    tls_verify_hostname: bool = True
 
     def __post_init__(self) -> None:
         transport = self.transport.strip().lower()
@@ -64,8 +65,9 @@ class ConnectionProfile:
             raise ValueError("bluetooth connection requires bluetooth_device")
         if self.tls_certificate and self.tls_certificate_file:
             raise ValueError("use either embedded TLS certificate or certificate_file")
-        if transport != "tls" and any(
-            (self.tls_certificate, self.tls_certificate_file, self.tls_server_hostname)
+        if transport != "tls" and (
+            any((self.tls_certificate, self.tls_certificate_file, self.tls_server_hostname))
+            or not self.tls_verify_hostname
         ):
             raise ValueError("TLS certificate options require transport: tls")
 
@@ -101,6 +103,8 @@ class ConnectionProfile:
                 options["tls_ca_file"] = str(certificate_path)
             if self.tls_server_hostname:
                 options["tls_server_hostname"] = self.tls_server_hostname
+            if not self.tls_verify_hostname:
+                options["tls_check_hostname"] = False
         return options
 
     def to_mapping(self) -> dict[str, Any]:
@@ -125,6 +129,8 @@ class ConnectionProfile:
                 tls["certificate_file"] = self.tls_certificate_file
             if self.tls_server_hostname:
                 tls["server_hostname"] = self.tls_server_hostname
+            if not self.tls_verify_hostname:
+                tls["verify_hostname"] = False
             data["tls"] = tls
         return data
 
@@ -177,6 +183,7 @@ class ConnectionProfile:
             tls_server_hostname=(
                 None if tls.get("server_hostname") is None else str(tls["server_hostname"])
             ),
+            tls_verify_hostname=bool(tls.get("verify_hostname", True)),
         )
 
 

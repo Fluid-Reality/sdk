@@ -22,6 +22,7 @@ from .boards.board import (
     ActuatorDetection,
     ActuatorState,
     Diagnosis,
+    FirmwareUpdateResult,
     LansingConfig,
     LansingVersion,
     ManualOutput,
@@ -55,6 +56,7 @@ __all__ = [
     "ErrorInfo",
     "FirmwareError",
     "FluidRealityError",
+    "FirmwareUpdateResult",
     "Lansing",
     "LansingConfig",
     "LansingVersion",
@@ -76,4 +78,4 @@ __all__ = [
     "open_board_from_connection_file",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

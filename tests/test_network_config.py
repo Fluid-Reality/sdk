@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -61,8 +62,8 @@ def test_signal_level_uses_four_clear_strength_bands() -> None:
 
 
 def test_network_endpoint_supports_tcp_tls_and_ipv6() -> None:
-    assert build_network_endpoint("tcp", "rockford.local", 8765) == (
-        "tcp://rockford.local:8765"
+    assert build_network_endpoint("tcp", "rockford.local", 49765) == (
+        "tcp://rockford.local:49765"
     )
     assert build_network_endpoint("tls", "fe80::1", 443) == "tls://[fe80::1]:443"
 
@@ -78,7 +79,6 @@ def test_connection_dialog_has_all_supported_transport_choices(
     assert dialog.connection_tabs.tabText(2) == "Bluetooth"
     assert dialog.serial_port_label.text() == "Serial port"
     assert dialog.serial_port_label.objectName() == "FormLabel"
-    assert dialog.tls_options.isHidden()
     assert isinstance(dialog.network_encryption, LabeledToggle)
     assert dialog.network_encryption.text() == "Encryption"
     assert dialog.network_host_label.text() == "Host"
@@ -88,12 +88,7 @@ def test_connection_dialog_has_all_supported_transport_choices(
     assert isinstance(dialog.bluetooth_pair, LabeledToggle)
     assert dialog.bluetooth_pair.text() == "Pair and encrypt link"
 
-    dialog.network_encryption.setChecked(True)
-    dialog.connection_tabs.setCurrentIndex(1)
-    dialog.show()
-    qt_app.processEvents()
-
-    assert dialog.tls_options.isVisible()
+    assert not hasattr(dialog, "tls_ca_file")
     dialog.close()
 
 
@@ -129,6 +124,89 @@ def test_every_form_field_has_an_explicit_visible_label(
     finally:
         for widget in widgets:
             widget.close()
+
+
+def test_tls_certificate_dialog_uses_light_tool_dialog_style() -> None:
+    dialog = TlsCertificateDialog()
+    try:
+        assert dialog.objectName() == "ToolDialog"
+        assert dialog.server_name.text() == ""
+        assert "Optional" in dialog.server_name.placeholderText()
+        assert dialog.private_key_file.text() == ""
+        assert dialog.new_private_key_button.icon().isNull() is False
+    finally:
+        dialog.close()
+
+
+def test_new_private_key_button_opens_save_dialog(
+    qt_app: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "new-key.pem"
+    proposed_paths: list[str] = []
+
+    def choose_file(_parent, _title, proposed, _filter, **_kwargs):
+        proposed_paths.append(proposed)
+        return str(selected), "PEM private key (*.pem)"
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", choose_file)
+    dialog = TlsCertificateDialog()
+    try:
+        dialog.server_name.setText("shared-board.local")
+        dialog._choose_new_private_key()
+
+        assert Path(proposed_paths[0]).name == "shared-board.local-private-key.pem"
+        assert dialog.private_key_file.text() == str(selected)
+        assert dialog._private_key_is_new is True
+    finally:
+        dialog.close()
+
+
+def test_create_files_opens_save_dialog_with_recommended_filename(
+    qt_app: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "chosen-certificate.pem"
+    proposed_paths: list[str] = []
+
+    def choose_file(_parent, _title, proposed, _filter, **_kwargs):
+        proposed_paths.append(proposed)
+        return str(selected), "PEM certificate (*.pem)"
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", choose_file)
+    dialog = TlsCertificateDialog()
+    dialog.server_name.setText("shared-board.local")
+
+    dialog._create()
+
+    assert Path(proposed_paths[0]).name == "shared-board.local-certificate.pem"
+    assert dialog.generated_files is not None
+    assert dialog.generated_files.certificate == selected
+    assert dialog.generated_files.private_key == tmp_path / "chosen-private-key.pem"
+
+
+def test_create_files_asks_before_overwriting(
+    qt_app: QApplication, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "existing-certificate.pem"
+    selected.write_text("old certificate", encoding="utf-8")
+    answers: list[str] = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(selected), "PEM certificate (*.pem)"),
+    )
+
+    def confirm(_parent, title, *_args, **_kwargs):
+        answers.append(title)
+        return QMessageBox.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", confirm)
+    dialog = TlsCertificateDialog()
+
+    dialog._create()
+
+    assert answers == ["Overwrite existing files?"]
+    assert dialog.generated_files is not None
+    assert b"BEGIN CERTIFICATE" in selected.read_bytes()
 
 
 def test_secret_fields_use_trailing_eye_actions(qt_app: QApplication) -> None:
@@ -187,19 +265,13 @@ def test_network_connection_allows_an_empty_access_token(
 
     dialog._attempt_connection()
 
-    assert attempts == [("tcp://127.0.0.1:8765", {})]
+    assert attempts == [("tcp://127.0.0.1:49765", {})]
     dialog.close()
 
 
-def test_tls_connection_infers_certificate_name(
-    qt_app: QApplication, tmp_path, monkeypatch
+def test_tls_connection_does_not_require_a_certificate(
+    qt_app: QApplication,
 ) -> None:
-    certificate = tmp_path / "board.pem"
-    certificate.write_text("test certificate", encoding="utf-8")
-    monkeypatch.setattr(
-        "apps.network_config.app.certificate_server_name",
-        lambda _path: "fluidreality-bridge",
-    )
     dialog = ConnectionDialog()
     attempts: list[tuple[str, dict[str, object]]] = []
     dialog.attempt_requested.connect(
@@ -208,12 +280,29 @@ def test_tls_connection_infers_certificate_name(
     dialog.connection_tabs.setCurrentIndex(1)
     dialog.network_encryption.setChecked(True)
     dialog.network_host.setText("127.0.0.1")
-    dialog.tls_ca_file.setText(str(certificate))
 
     dialog._attempt_connection()
 
-    assert dialog.tls_server_hostname.text() == "fluidreality-bridge"
-    assert attempts[0][1]["tls_server_hostname"] == "fluidreality-bridge"
+    assert attempts[0][1] == {"tls_verify_certificate": False}
+    dialog.close()
+
+
+def test_network_form_stays_top_aligned_when_encryption_is_toggled(
+    qt_app: QApplication,
+) -> None:
+    dialog = ConnectionDialog()
+    dialog.connection_tabs.setCurrentIndex(1)
+    dialog.show()
+    qt_app.processEvents()
+    initial_top = dialog.network_host.mapTo(dialog, dialog.network_host.rect().topLeft()).y()
+
+    dialog.network_encryption.setChecked(True)
+    qt_app.processEvents()
+    dialog.network_encryption.setChecked(False)
+    qt_app.processEvents()
+
+    final_top = dialog.network_host.mapTo(dialog, dialog.network_host.rect().topLeft()).y()
+    assert final_top == initial_top
     dialog.close()
 
 
@@ -253,9 +342,9 @@ def test_worker_passes_tls_connection_options_to_network_board() -> None:
     worker = NetworkWorker(RecordingBoard)
     options = {"network_token": "secret", "tls_ca_file": "rockford-ca.pem"}
 
-    worker._connect("tls://rockford.local:8765", options)
+    worker._connect("tls://rockford.local:49765", options)
 
-    assert RecordingBoard.opened == ("tls://rockford.local:8765", options)
+    assert RecordingBoard.opened == ("tls://rockford.local:49765", options)
     assert RecordingBoard.supports_network_configuration() is False
 
 
@@ -498,7 +587,7 @@ def test_connection_file_uses_active_network_endpoint_when_board_has_no_ip(
         window._last_status = {"IP": "0.0.0.0"}
         window.address.setText("0.0.0.0")
         window._connected_over_network = True
-        window._active_endpoint = "tcp://127.0.0.1:8765"
+        window._active_endpoint = "tcp://127.0.0.1:49765"
 
         window._create_connection_file()
 
@@ -626,6 +715,55 @@ def test_window_shows_only_declared_interface_tabs(qt_app: QApplication) -> None
     finally:
         wifi_window.close()
         ethernet_window.close()
+
+
+def test_network_setup_exposes_access_point_mode_when_firmware_reports_it(
+    qt_app: QApplication,
+) -> None:
+    window = NetworkConfigWindow(WifiBoard)
+    try:
+        window._on_configuration(True)
+        window._on_interfaces(("WIFI",), True)
+        window._on_features(("IP", "HOST", "TCP", "AUTH", "TLS", "AP"))
+        window._on_connected(True, "Rockford")
+        window._on_status(
+            {
+                "WIFI": "ON",
+                "STATE": "ACTIVE",
+                "WIFI_MODE": "ACCESS_POINT",
+                "IP": "192.168.4.1",
+                "MASK": "255.255.255.0",
+                "GW": "192.168.4.1",
+                "DNS1": "192.168.4.1",
+            }
+        )
+        window._on_access_point_status(
+            {
+                "SSID64": base64.b64encode(b"Rockford-Lab").decode("ascii"),
+                "CHANNEL": "11",
+                "STATE": "ACTIVE",
+                "IP": "192.168.4.1",
+                "CLIENTS": "1",
+            }
+        )
+        window.show()
+        qt_app.processEvents()
+
+        assert window.wifi_mode.isVisible()
+        assert window.wifi_mode.currentData() == "ACCESS_POINT"
+        assert window.access_point_panel.isVisible()
+        assert window.network_list.isHidden()
+        assert window.access_point_ssid.text() == "Rockford-Lab"
+        assert window.access_point_channel.value() == 11
+        assert "1 client" in window.access_point_state.text()
+        assert window.use_dhcp.isHidden()
+        assert not window.ap_assignment.isHidden()
+        assert window.address.text() == "192.168.4.1"
+        assert window.address.isEnabled()
+        assert window.subnet.isEnabled()
+        assert not window.ip_form.isRowVisible(window.gateway)
+    finally:
+        window.close()
 
 
 def test_window_populates_dual_interface_configuration(qt_app: QApplication) -> None:
