@@ -2,6 +2,19 @@
 
 This note exists so a future Codex session can continue the Lansing firmware and Python SDK work without needing the original chat history.
 
+## 2026-09 SDK 0.2.3 Dashboard Compatibility Fixes
+
+The universal dashboard now replaces its generic SDK wrapper with the detected
+Rockford or Lansing profile while retaining the already-open transport. This
+prevents Rockford Board Settings from issuing Lansing-only `CFG MAX` and
+`CFG DIS` commands. `Rockford.read_config()` also returns optional detection,
+DT0-error, and DT1-error thresholds from the comprehensive `CFG` response, and
+the dashboard writes only settings that changed.
+
+Known firmware-update and factory-reset reboots reconnect without sending the
+legacy binary-to-text recovery sequence. That avoids a delayed `BAD_COMMAND`
+response being mistaken for the post-reboot firmware-version response.
+
 ## 2026-09 Rockford VT Budget
 
 Rockford firmware 1.1 no longer uses Lansing's `CFG MAX`/`CFG DIS` timing
@@ -240,25 +253,14 @@ Use recovery for both error-state and working actuators. Do not require an actua
 
 ### Square Wave Behavior
 
-The dashboard square wave is not a sine wave and not a raw `OUT` operation. It uses normal safe `ACT` writes:
+The current universal dashboard uses the same live process-window design as
+Initialize and Fast Init. It alternates one second at full forward voltage with
+one second at full reverse voltage, labels the reverse phase `Discharging`, and
+plots reverse drive as positive full-voltage magnitude. It runs until Stop,
+disconnect, or application close; the obsolete All Off button is not present.
 
-1. send `ACT <actuator> 255` for full forward drive
-2. wait 1 second
-3. send `ACT <actuator> 0`
-4. let firmware-managed discharge run
-5. wait for firmware debug confirmation before reactivating
-
-The debug confirmation used by the dashboard is:
-
-```text
-DBG:DISCHARGE_STOP,ACT>0
-```
-
-The actuator number changes per selected actuator.
-
-If `ACT_FAILED` happens because the actuator is still locked out during discharge, the dashboard should wait and keep watching debug/status rather than crashing. The session explicitly changed behavior away from simply retrying on a fixed timer; reactivation should be based on firmware debug messages that prove discharge stopped.
-
-The square wave runs indefinitely until the user presses Stop, All Off, disconnects, or closes the app.
+While it is running, only Stop is enabled. Playing after a stop clears the old
+plots. Voltage and positive-output current-delta samples can be saved to CSV.
 
 ### Serial Timeout and Status Misalignment
 
@@ -711,7 +713,9 @@ Important sine-stream behavior:
 - `stream_sine()` defaults to `1..255`
 - it avoids `0` during the waveform because `0` means disable/discharge
 - it sends final `0` at the end to trigger discharge
-- for long tests, raise `CFG MAX` or use SDK `--max-active-ms` in the example, otherwise firmware correctly forces discharge mid-waveform
+- on Lansing, long tests may require a larger `CFG MAX` or SDK
+  `--max-active-ms`; Rockford instead uses the VT-budget model described at the
+  top of this document
 
 Example:
 

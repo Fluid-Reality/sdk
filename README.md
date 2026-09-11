@@ -314,6 +314,11 @@ python examples\05_status_snapshot.py COM5 --board lansing
 Rockford is the default hardware profile. Pass `--board lansing` for Lansing.
 Use `python <example> --help` for each example's complete options.
 
+The universal dashboard identifies connected firmware and adopts the matching
+Rockford or Lansing SDK profile without reopening the transport. Rockford's
+typed configuration snapshot includes its VT budget, audit state, safety and
+debug flags, and detection thresholds reported by current firmware.
+
 - [01_basic_actuator_current.py](examples/01_basic_actuator_current.py):
   power the board, connect the output, detect one actuator, pulse it, and read
   current.

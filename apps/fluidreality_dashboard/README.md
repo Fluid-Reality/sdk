@@ -4,6 +4,11 @@ Desktop dashboard for Fluid Reality boards implementing the SDK `Board`
 protocol. The UI adapts to capabilities reported by connected firmware, so
 unsupported tools stay hidden or disabled.
 
+After reading the firmware identity, the universal dashboard adopts the
+matching Rockford or Lansing SDK profile while preserving the open transport.
+This keeps board-specific configuration commands and capabilities correct even
+when the connection began through the generic board wrapper.
+
 For the complete operator guide, see the
 [dashboard user manual](docs/lansing_dashboard_manual.md).
 
@@ -109,7 +114,8 @@ current delta are plotted live and can be saved to CSV.
 - Board Settings edits Lansing timing or Rockford's per-actuator VT budget,
   plus safety, debug, and supported detection thresholds. Rockford shows the
   limit in V·s, its permanent user-modified audit state, and a hardware-damage
-  warning before any change.
+  warning before any change. Rockford settings are loaded from one complete
+  configuration response, and Save sends only values that actually changed.
 - Bluetooth Config enables Bluetooth, configures security, clears bonds, and
   changes only the suffix of the advertised name. Firmware always adds `FR-`.
 - Wi-Fi Config selects Client or Access Point mode. Client mode scans and joins
@@ -123,7 +129,8 @@ current delta are plotted live and can be saved to CSV.
 - Fluid Mesh is enabled only when firmware reports `MESH`; Rockford currently
   reports no Fluid Mesh support.
 - Update Firmware is enabled only with `FWU>0` over USB, TCP, or TLS. It uploads
-  a `.bin`, verifies SHA-256, reboots, and reconnects. Bluetooth is unsupported.
+  a `.bin`, verifies SHA-256, reboots, and reconnects without sending legacy
+  text-recovery bytes during the known reboot. Bluetooth is unsupported.
 - Factory Reset is enabled only with `FCR>0` over USB. After confirmation it
   erases persistent configuration, reboots, and reconnects automatically.
 

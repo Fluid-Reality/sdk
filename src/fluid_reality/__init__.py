@@ -80,4 +80,4 @@ __all__ = [
     "open_board_from_connection_file",
 ]
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"

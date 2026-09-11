@@ -130,9 +130,9 @@ detection protocol, `VT>1` capability, and VT configuration/status fields. The
 simulator models that protocol surface; physical 100 V/s forced-discharge
 timing remains firmware behavior.
 
-The simulator requires `fluid-reality>=0.2.2` for Rockford VT-budget support,
-virtual-port aliases, and the
-raw TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
+The simulator requires `fluid-reality>=0.2.3` for the complete Rockford
+configuration snapshot, VT-budget support, virtual-port aliases, and the raw
+TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
 access is required.
 
 When a board JSON is used, runtime state is checkpointed into its

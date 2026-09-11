@@ -1,397 +1,220 @@
-# Lansing Development Kit Dashboard User Manual
+# Fluid Reality Dashboard User Manual
 
-Fluid Reality Lansing Dashboard
-
-Revision: September 7, 2026
+Revision: September 11, 2026
 
 ## Purpose
 
-This manual explains how to install and operate the Fluid Reality Lansing Dashboard. It is intended for operators who need to connect to a Lansing board, enable the high-voltage power supply, verify voltage and current, detect connected actuators, initialize actuators, diagnose actuator health, recover actuators, and run controlled square-wave output.
+The Fluid Reality Dashboard connects to Rockford and Lansing boards, displays
+power and telemetry, detects actuators, runs conditioning and diagnostic
+procedures, and exposes supported board configuration tools. The interface
+adapts to the connected firmware; unsupported actions remain disabled.
 
-The screenshots in this manual use representative measurements. Your port names, voltage, current, actuator health, and event-log timestamps will vary by system and board.
+The dashboard reads the firmware identity after connecting and adopts the
+matching SDK hardware profile without reopening the transport. This ensures
+that Rockford and Lansing receive only configuration commands supported by
+their firmware.
 
-## Virtual simulator ports
+## Install And Run
 
-The dashboard lists physical serial ports together with aliases configured by
-the SDK. Set the variable before launching the dashboard:
+Use Python 3.10 or newer. From a cloned SDK checkout:
+
+```powershell
+cd C:\research\FluidReality\sdk
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m pip install -r apps\fluidreality_dashboard\requirements.txt
+python apps\fluidreality_dashboard\app.py
+```
+
+The dashboard requires `fluid-reality[bluetooth]>=0.2.3`. On macOS or Linux,
+create the environment with `python3 -m venv .venv` and activate it with
+`source .venv/bin/activate`.
+
+## Connect To A Board
+
+Click `Connect`, choose a transport, enter its settings, and click `OK`.
+
+- Serial lists available USB ports.
+- Network accepts a host, port, optional access token, and optional TLS server
+  certificate verification.
+- Bluetooth discovers nearby devices whose advertised names identify them as
+  Fluid Reality boards. Pairing and access-token authentication are available
+  when the firmware requires them.
+
+Authentication errors are translated into actionable messages. A TCP timeout
+means the selected host and port did not accept a connection; verify the
+board's Wi-Fi address, subnet, TCP-server setting, and local network route.
+
+Virtual simulator aliases can be added before launch:
 
 ```powershell
 $env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
 ```
 
-On macOS/Linux:
+Multiple aliases are separated by semicolons.
 
-```bash
-export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:49765"
-```
+## Main Window
 
-Multiple mappings are separated by semicolons. Only a selected mapped alias is
-redirected; all other listed ports continue to use physical serial.
+The connection card shows the active endpoint and firmware identity. The Power
+toggle controls the PSU and also controls PSC when the board exposes it.
+Voltage and current cards show live telemetry.
 
-## Getting Started
+Actuator cards show the current classification:
 
-Use Python 3.10 or newer.
-
-Start by cloning the SDK repository and entering the dashboard application folder.
-
-macOS or Linux:
-
-```bash
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk/apps/lansing_dashboard
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ../..
-python -m pip install -r requirements.txt
-python app.py
-```
-
-Windows PowerShell:
-
-```powershell
-git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk\apps\lansing_dashboard
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ..\..
-python -m pip install -r requirements.txt
-python app.py
-```
-
-The dashboard opens to the main Lansing Dashboard window. Before connection, board controls are disabled and actuator cards show `N/A` because no board state has been received.
-
-## Dashboard Overview
-
-The dashboard is organized into four numbered operating areas:
-
-1. Connection: USB serial, Bluetooth LE, TCP, or TLS selection; connect, disconnect, and connection state.
-2. Telemetry: power-supply state, output-connection state, measured voltage, measured current, and board configuration.
-3. Actuator Tools & Cards: grouped actuator cards and action tabs for initialize, diagnose, recover, and square-wave operation.
-4. Event Log: timestamped connection, status, detection, diagnosis, recovery, initialization, and square-wave messages.
-
-The top-right status pills show whether the app is idle or busy, and whether a Lansing board is connected.
-
-![Dashboard overview](lansing_dashboard_manual/images/00_dashboard_overview_numbered.png)
-
-## Connect To The Board
-
-1. Connect the board to the computer or make sure it is reachable over Bluetooth or the network.
-2. Open the dashboard and click `Connect`.
-3. Choose `Serial`, `Network`, or `Bluetooth`.
-4. For Serial, select the USB port. For Network, enter the host, port, optional access token, and TLS certificate when encryption is enabled. For Bluetooth, scan and select the board, then enter its access token if required.
-5. Click `OK`. If the connection fails, the dialog stays open and displays the error so the settings can be corrected.
-
-![Dashboard before connection](lansing_dashboard_manual/images/01_dashboard_disconnected.png)
-
-After a successful connection, the connection box shows the endpoint and board identity. The telemetry and actuator areas become available.
-
-## Enable The Power Supply
-
-The `Power Supply` card controls whether the high-voltage supply is enabled.
-
-Before enabling the power supply, the connected dashboard should show the `Power Supply` card as `Off`, and the `Voltage` card should read near zero.
-
-![Connected with power off](lansing_dashboard_manual/images/02_connected_power_off.png)
-
-1. Confirm the board is connected.
-2. Locate the `Power Supply` telemetry card.
-3. Click the red toggle so the card reads `On`.
-4. Watch the `Voltage` card.
-
-When the power supply is enabled, the measured voltage should rise from near zero to the board's present supply voltage. In the example below, the dashboard shows approximately `215-220 V`.
-
-![Power supply on and voltage visible](lansing_dashboard_manual/images/03_power_on_voltage.png)
-
-At this point the power supply is on, but the output path may still be open. The `Output Connection` card must also be enabled before actuator detection and actuator operations can run.
-
-## Connect The Power Supply Output
-
-The `Output Connection` card controls whether the power supply output path is connected toward the actuator side.
-
-1. Confirm the `Power Supply` card reads `On`.
-2. Locate the `Output Connection` telemetry card.
-3. Click the blue toggle so the card reads `Connected`.
-4. Watch the `Current` card.
-
-The `Current` card shows the present current draw in milliamps. This is the primary place to monitor current while the board is connected, during detection, and during actuator actions.
-
-![Output connected and current visible](lansing_dashboard_manual/images/04_output_connected_current.png)
-
-When both `Power Supply` and `Output Connection` are enabled, the dashboard automatically starts detection for the currently selected actuator group.
-
-## Actuator Groups
-
-The Lansing board exposes 24 actuator positions. The dashboard displays them in three groups:
-
-| Group | Actuators |
+| State | Meaning |
 |---|---|
-| Group 0 | 0 through 7 |
-| Group 1 | 8 through 15 |
-| Group 2 | 16 through 23 |
+| `N/A` | No detection result is available in this dashboard session. |
+| `Ready` | The actuator was detected and passed its current check. |
+| `Error` | The actuator current exceeded the configured error threshold. |
+| `Not connected` | DT0 did not detect the minimum current delta. |
+| `Active` | The actuator is being driven. |
+| `Discharging` | The actuator is returning its accumulated drive balance. |
 
-Use the `Group` dropdown in the actuator panel to switch groups. Group 0 is shown by default.
+Only DT0 assigns `Not connected`. Once an actuator has been detected, later
+diagnosis does not change it back to `Not connected`; run DT0 again to make a
+new connection determination. The default detection-current delta is 0.10 mA.
 
-In most Lansing Development Kit setups, only one actuator group is populated. That typical configuration uses Group 0, which contains actuators 0 through 7. Groups 1 and 2 are available for expanded systems that use additional actuator positions.
+## Process Windows
 
-Clicking an actuator card selects that actuator. The action tabs apply to the selected actuator. If a card is `Not connected` or is currently `Detecting`, it cannot be selected for actuator operations.
+Initialize, Fast Init, Diagnose, Recover, and Square Wave use consistent Play,
+Stop, and Save controls. While a process is running, only Stop is enabled.
+Playing again after a stop clears the prior trace. Save writes the collected
+samples to CSV.
 
-## Actuator Status Meanings
+Time plots show a rolling 30-second window. Voltage plots display positive
+magnitude on a 0-250 V axis even when the board is driving in reverse. Current
+plots always start at 0 mA and never show a negative axis. The red progress
+marker follows the newest value, and the numeric label is drawn above the data
+line so it remains readable.
 
-| Status | Meaning | Available Actions |
-|---|---|---|
-| `N/A` | No detection result is available. This is the default state before connection and after disconnect. | None until the board is connected and detection has run. |
-| `Detecting` | The dashboard is currently testing the actuator. | Wait for the result. |
-| `Ready` | The actuator is connected and passed detection. | Initialize, Diagnose, Recover, Square Wave. |
-| `Not connected` | Detection found no significant current change. | No actuator operations. Check cabling or actuator connection. |
-| `Error` | Detection found excessive current change. | Initialize, Diagnose, and Recover are available. Square Wave is blocked. |
-| `Active` | The actuator is currently being driven. | Stop or wait for the action to complete. |
-| `Discharging` | The actuator is discharging after being driven. | Wait for discharge to complete before reactivation. |
+### Initialize
 
-Disconnecting the board resets all actuator cards to `N/A`.
+Initialize measures one baseline and sends a 1 Hz bipolar sequence at ±25 V,
+±50 V, ±100 V, and ±200 V for 30 seconds per level. A current measurement is
+taken after every voltage change, but the plotted current delta uses only the
+positive-output readings. Diagnosis runs automatically afterward.
 
-## Automatic Detection
+### Fast Init
 
-Automatic detection runs when:
+Fast Init alternates directly between positive and reverse output without 0 V
+stops. It begins at full available voltage and adjusts by 5 V, 10 V, or 20 V
+according to error from the requested current-delta target. The target must be
+greater than zero and below 3.0 mA. It succeeds when full voltage is reached at
+or below the target and otherwise stops after 60 seconds. Only positive-output
+current deltas are plotted.
 
-- the dashboard is connected to a board,
-- the power supply is `On`,
-- the output connection is `Connected`, and
-- a group is selected.
+### Diagnose
 
-Detection also runs again when you select another actuator group while the board is powered and connected.
+Diagnose first warms the actuator with one second at full forward voltage and
+one second at full reverse voltage, repeated three times. It then sweeps from
+0 V to 200 V in 10 V increments and plots voltage on the horizontal axis and
+current on the vertical axis. The current axis spans 0-5 mA.
 
-During detection, the dashboard processes each selected actuator separately:
+Two configurable curves divide the plot into healthy green, caution orange,
+and error red regions. The final assessment considers the complete trace:
 
-1. Uses manual output to cancel activation and discharge and zero all 24 actuators.
-2. Measures baseline current.
-3. Drives only the selected actuator forward at maximum output for 250 ms.
-4. Measures the initial current delta and stops as `Not connected` below 0.5 mA
-   or `Error` above 10 mA.
-5. Otherwise keeps the same forward output continuously active for another 2 seconds.
-6. Measures and classifies the final current delta.
-7. Stops the actuator without reverse discharge and restores the previous safety setting.
-8. Updates the actuator card and writes the two measurements to the Event Log.
+- A trace that remains green reports that the actuator is in great shape.
+- A caution or temporary error excursion with a non-red ending reports that
+  the actuator is functional and recommends initialization.
+- A red ending reports that the actuator is outside the acceptable range and
+  recommends recovery.
 
-![Autodetection running](lansing_dashboard_manual/images/05_autodetection_running.png)
+The most recent current value and unit remain visible while the trace is being
+drawn.
 
-The detection thresholds are:
+### Recover
 
-| Stage and current delta | Classification |
+Recover is available only for an actuator classified as `Error`. It runs
+±25 V, ±50 V, ±100 V, and ±200 V. At each stage, the positive-output current
+delta must remain at or below 90% of the diagnostic error curve for three
+continuous seconds before recovery advances. Reverse-output current is neither
+used for qualification nor plotted. A marker identifies every voltage
+increase. Run Diagnose afterward to reclassify the actuator.
+
+### Square Wave
+
+Square Wave alternates one second at full forward voltage with one second at
+full reverse voltage. The reverse phase is labeled `Discharging` and is shown
+as full voltage magnitude in the plot. The process continues until Stop.
+Voltage and positive-output current delta are plotted live and can be saved to
+CSV.
+
+## Board Tools
+
+Buttons are enabled only when the connected firmware and transport support the
+operation.
+
+### Board Settings
+
+Board Settings edits Lansing timing or Rockford's per-actuator VT budget,
+manual-output safety, firmware logging, and supported detection thresholds.
+Rockford settings load from one comprehensive `CFG` response, and Save writes
+only values that changed.
+
+Rockford displays its VT limit in V·s. The default is 10,000 V·s, equivalent to
+200 V for 50 seconds. Changing it sets a permanent audit marker. Factory reset
+restores the default budget but intentionally preserves that marker. An
+incorrect VT limit can permanently damage actuators or board electronics, so
+the dashboard requires explicit risk confirmation before a change.
+
+### Bluetooth Config
+
+Bluetooth Config enables Bluetooth, configures security, clears bonds, and
+changes the advertised-name suffix. Firmware always prepends `FR-`; the user
+edits only the portion after that prefix.
+
+### Wi-Fi, Network, And Security
+
+Wi-Fi Config selects Client or Access Point mode. Network Config selects DHCP
+or static IPv4 settings and enables the TCP server. Security & Encryption
+separately controls access-token authentication and TLS credentials.
+
+When changing the network address, save the new address before disconnecting.
+If access-token authentication is enabled, enter that token in the Connect
+window. A board response stating authentication is required means the token
+was omitted or access-token use was not enabled in the connection settings.
+
+### Fluid Mesh
+
+Fluid Mesh is enabled only when firmware reports the `MESH` capability.
+Rockford currently reports no Fluid Mesh support.
+
+### Update Firmware
+
+Update Firmware requires `FWU>0` and supports USB, TCP, or TLS, not Bluetooth.
+Choose the firmware `.bin`, click Update, and leave the board connected while
+the image uploads and verifies. The board then reboots and the dashboard
+reconnects automatically. During this known reboot, the dashboard does not
+send legacy text-recovery bytes, preventing a delayed parser error from being
+mistaken for the new firmware identity.
+
+### Factory Reset
+
+Factory Reset requires `FCR>0` and is available only over USB serial. The
+confirmation warning lists the persistent settings that will be erased. After
+confirmation, the board resets, reboots, and the dashboard reconnects over the
+same serial port.
+
+## Event Log And Troubleshooting
+
+The Event Log records connections, detection, actuator operations, firmware
+responses, and failures. Enable Verbose only when command-level diagnostics are
+needed; Save Log exports the session.
+
+| Symptom | Check |
 |---|---|
-| Initial current delta less than `0.50 mA` | `Not connected`; skip the 2-second stage |
-| Initial 250 ms delta greater than `10.00 mA` | `Error`; skip the 2-second stage |
-| Final delta less than `3.00 mA` | `Ready` |
-| Final delta greater than or equal to `3.00 mA` | `Error` |
+| Serial port is missing | Refresh the list, reconnect USB, and check the driver. |
+| TCP connection times out | Verify the board IP, subnet, port, TCP-server toggle, and PC route. |
+| Authentication is required | Enable Use access token and enter the configured token. |
+| Board Settings reports an unsupported key | Confirm firmware identity and use SDK/dashboard 0.2.3 or newer. |
+| Actuator is `Not connected` | Inspect wiring, then rerun DT0. |
+| Actuator is `Error` | Run Initialize and Diagnose; use Recover if it still ends in error. |
+| A tool button is disabled | Connect through a supported transport and confirm the firmware advertises its capability. |
 
-An actuator classified as `Error` should be initialized before any other corrective action. The initialization process normally recovers an error-state actuator by conditioning it through staged bipolar drive and reducing the excess current drawn during diagnosis. After initialization, the dashboard runs diagnosis again so the actuator can return to `Ready` if the current delta falls back into the acceptable range.
+## Safe Shutdown
 
-If initialization does not reduce the current draw enough to clear the error state, the `Recover` tool can be used as a secondary corrective tool. Recovery is intended for advanced users only because it applies configurable manual drive with safety temporarily disabled during the procedure.
-
-The Event Log records baseline, initial forward current and delta, conditioned
-forward current and delta, and the final classification.
-
-![Autodetection complete](lansing_dashboard_manual/images/06_detection_complete.png)
-
-In the example, actuator 3 is `Not connected` because the current delta is below the detection threshold. Actuator 4 is `Error` because its current delta is above the error threshold. Other actuators in the group are `Ready`.
-
-## Initialize
-
-Use `Initialize` to condition a selected actuator through staged positive and negative drive, then diagnose it.
-
-Initialize is the first tool tab in the dashboard and should be the first corrective action for an actuator in `Error` state. Initialize is available for both `Ready` and `Error` actuators.
-
-The initialization sequence is:
-
-| Stage | Target Drive | Duration |
-|---|---:|---:|
-| 1 | `+/-25 V` | `30 s` |
-| 2 | `+/-50 V` | `30 s` |
-| 3 | `+/-100 V` | `30 s` |
-| 4 | `+/-200 V` | `30 s` |
-
-Total initialization time is `120 s`.
-
-To initialize an actuator:
-
-1. Confirm `Power Supply` is `On`.
-2. Confirm `Output Connection` is `Connected`.
-3. Select a `Ready` or `Error` actuator.
-4. Open the `Initialize` tab.
-5. Click `Initialize`.
-6. Watch the progress bar and elapsed-time label.
-7. Wait for the automatic diagnosis at the end of initialization.
-
-![Initialize progress](lansing_dashboard_manual/images/09_initialize_progress.png)
-
-During initialization, the tab displays elapsed time, total time, the active stage, and the stage voltage. At the end of the sequence, the dashboard restores normal safety behavior and runs diagnosis automatically.
-
-If initialization is run on an error-state actuator, use the final diagnosis result to determine whether the actuator has returned to `Ready` or still needs additional recovery or inspection.
-
-## Diagnose
-
-Use `Diagnose` to measure one selected actuator and display its baseline, forward, and discharge current readings.
-
-1. Select a `Ready` or `Error` actuator card.
-2. Open the `Diagnose` tab.
-3. Click `Diagnose`.
-4. Read the result in the tab and review the Event Log.
-
-![Diagnose tab](lansing_dashboard_manual/images/07_diagnose_tab.png)
-
-Diagnosis is also the way to reclassify an actuator after initialization or recovery. If an actuator was previously in `Error`, run `Diagnose` after the corrective action. If the measured delta returns to the acceptable range, the actuator can return to `Ready`.
-
-## Recover
-
-Use `Recover` when an actuator needs controlled positive and negative manual drive. Recovery is available for both `Ready` and `Error` actuators. It is not available for `Not connected` actuators.
-
-For an actuator in `Error` state, run `Initialize` first. Use `Recover` only if initialization and the follow-up diagnosis do not return the actuator to `Ready`. Recovery is intended for advanced users only because it temporarily disables manual-output safety while the configured drive sequence is running.
-
-Recovery parameters:
-
-| Parameter | Default | Meaning |
-|---|---:|---|
-| Voltage | `50.0 V` | Target positive and negative recovery voltage. |
-| Duration | `60 s` | Total recovery time. |
-
-The dashboard scales recovery from the measured power-supply voltage. For example, if the PSU reads `200 V` and recovery is set to `100 V`, the dashboard drives approximately half of the available supply voltage in the positive direction and half in the negative direction.
-
-To run recovery:
-
-1. Confirm `Power Supply` is `On`.
-2. Confirm `Output Connection` is `Connected`.
-3. Select a `Ready` or `Error` actuator.
-4. Open the `Recover` tab.
-5. Set `Voltage`.
-6. Set `Duration`.
-7. Click `Recover`.
-8. Watch the recovery progress in the tab and Event Log.
-
-![Recover tab for an error actuator](lansing_dashboard_manual/images/08_recover_error.png)
-
-During recovery, the dashboard:
-
-1. Measures baseline current.
-2. Temporarily allows direct manual output.
-3. Alternates the selected actuator between positive and negative drive.
-4. Reports current and current delta every second.
-5. Turns the selected actuator off at the end.
-6. Restores normal safety state.
-7. Shows the final current delta.
-
-After recovery, run `Diagnose` to reclassify the actuator. If the actuator returns to the acceptable current-delta range, it can be shown as `Ready`.
-
-## Square Wave
-
-Use `Square Wave` to drive the selected `Ready` actuator repeatedly until stopped.
-
-To run square wave output:
-
-1. Confirm the actuator is `Ready`.
-2. Select the actuator card.
-3. Open the `Square Wave` tab.
-4. Click `Start Selected`.
-5. Use `Stop` to stop the square wave.
-6. Use `All Off` to immediately command actuators off.
-
-![Square wave controls](lansing_dashboard_manual/images/10_square_wave.png)
-
-Square-wave operation applies full forward output for approximately one second, commands the actuator off, allows discharge, and waits for the board to indicate that discharge is complete before reactivating. The cycle continues until `Stop`, `All Off`, disconnect, or application close.
-
-Square wave is disabled for actuators in `Error`, `Not connected`, `N/A`, or `Detecting` state.
-
-## Event Log
-
-The Event Log is the primary audit trail for board operation. It records:
-
-- board connection and disconnection,
-- power-supply changes,
-- output-connection changes,
-- voltage and current context during detection,
-- per-actuator detection progress,
-- detection thresholds and classifications,
-- diagnosis results,
-- recovery progress and final delta,
-- initialization progress,
-- square-wave start, stop, and discharge-wait messages,
-- status refresh failures or command errors.
-
-Use the Event Log whenever the dashboard state is unexpected. It usually explains whether the board is waiting for power, waiting for output connection, detecting a group, blocked by an actuator state, or waiting for discharge completion.
-
-## Normal Operating Workflow
-
-Use this sequence for a standard session:
-
-1. Launch the dashboard.
-2. Select the board serial port.
-3. Click `Connect`.
-4. Turn `Power Supply` to `On`.
-5. Confirm the `Voltage` card rises to the expected supply voltage.
-6. Turn `Output Connection` to `Connected`.
-7. Confirm the `Current` card shows present draw in mA.
-8. Wait for automatic detection to classify the selected group.
-9. Select a `Ready` actuator.
-10. Use the tool tabs in dashboard order as needed: `Initialize`, `Diagnose`, `Recover`, then `Square Wave`.
-11. Use the Event Log to monitor command progress and measured results.
-12. When finished, click `All Off` if square wave is running.
-13. Set `Output Connection` to open.
-14. Set `Power Supply` to off.
-15. Click `Disconnect`.
-
-## Error-State Workflow
-
-Use this sequence when an actuator is shown as `Error`:
-
-1. Select the error-state actuator card.
-2. Review the card delta and the Event Log measurement.
-3. Open the `Initialize` tab.
-4. Click `Initialize`.
-5. Wait for initialization to complete and review the automatic diagnosis result.
-6. If the actuator returns to `Ready`, continue normal operation.
-7. If the actuator remains in `Error`, open the `Recover` tab.
-8. Confirm or adjust recovery `Voltage` and `Duration`.
-9. Click `Recover`.
-10. Watch current delta updates every second.
-11. After recovery completes, run `Diagnose`.
-12. If the actuator remains in `Error`, stop operation and inspect the actuator, cabling, and test setup.
-
-`Initialize` is the first corrective action for an actuator in `Error`. Use `Recover` only if initialization and follow-up diagnosis do not return the actuator to `Ready`. `Square Wave` is not available until the actuator is classified as `Ready`.
-
-## Shutdown
-
-At the end of a session:
-
-1. Stop any running square wave.
-2. Click `All Off`.
-3. Set `Output Connection` to open.
-4. Set `Power Supply` to off.
-5. Confirm the `Voltage` reading falls as expected for the system.
-6. Click `Disconnect`.
-
-After disconnect, the dashboard disables board controls and resets all actuator cards to `N/A`.
-
-## Troubleshooting
-
-| Symptom | Likely Cause | Action |
-|---|---|---|
-| Expected port is missing | Board was connected after dashboard launch or driver did not enumerate yet. | Click `Refresh`; reconnect USB if needed. |
-| Controls are disabled | The dashboard is not connected. | Select a port and click `Connect`. |
-| Voltage stays near zero after enabling power | Power supply did not enable or hardware is not supplying voltage. | Check board power, cabling, and the `Power Supply` toggle. |
-| Output will not connect | Power supply may be off. | Turn `Power Supply` on first, then connect output. |
-| Detection does not run | PSU or output connection is not ready. | Confirm both toggles are on and connected. |
-| Actuator shows `Not connected` | Current delta is below `0.50 mA`. | Inspect actuator wiring and connection. |
-| Actuator shows `Error` | Current delta is above `3.00 mA`. | Run `Initialize` first, then `Diagnose`; use `Recover` only if the actuator remains in error. |
-| Square wave cannot start | Selected actuator is not `Ready`. | Run detection or use `Initialize`, `Diagnose`, then `Recover` as needed until the actuator is ready. |
-| Operation appears paused | The board may be discharging or a long action is running. | Watch the busy pill and Event Log. |
-
-## Safety Notes
-
-The Lansing board can operate with high voltage. Only trained users should operate the dashboard with connected hardware.
-
-- Verify the actuator setup before enabling the power supply.
-- Do not connect the output until the test setup is ready.
-- Monitor the voltage and current cards during operation.
-- Use `Stop` or `All Off` if output should stop immediately.
-- Disconnect output and turn off the power supply before handling hardware.
-- Treat error-state actuators as requiring review before normal operation.
+Stop any running process, turn Power off, wait for voltage to fall to a safe
+level, and disconnect the dashboard before handling hardware. Only trained
+operators should work with the high-voltage system.

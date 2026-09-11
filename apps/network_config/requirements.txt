@@ -1,3 +1,3 @@
-fluid-reality[bluetooth]>=0.2.2
+fluid-reality[bluetooth]>=0.2.3
 PySide6>=6.6
 cryptography>=42

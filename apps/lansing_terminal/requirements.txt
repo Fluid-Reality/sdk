@@ -1,1 +1,1 @@
-fluid-reality[bluetooth]>=0.2.2
+fluid-reality[bluetooth]>=0.2.3

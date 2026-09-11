@@ -494,10 +494,18 @@ Fields:
 - `vt_limit_modified: bool`: permanent audit marker for any user VT-limit write
 - `safe: bool`
 - `debug: bool`
+- `detection_current_limit_ma: float | None`: minimum DT0 detection delta when
+  reported by firmware
+- `dt0_error_threshold_ma: float | None`: DT0 error threshold when reported by
+  firmware
+- `dt1_error_threshold_ma: float | None`: DT1 error threshold when reported by
+  firmware
 
 The default VT budget is 10,000 V·s (200 V for 50 seconds). An incorrect limit
 can permanently damage actuators or board electronics. Factory reset restores
-the default value but deliberately preserves `vt_limit_modified`.
+the default value but deliberately preserves `vt_limit_modified`. Optional
+detection fields are populated from the same comprehensive `CFG` response;
+they remain `None` with older firmware that does not report them.
 
 ## Power And Telemetry
 
