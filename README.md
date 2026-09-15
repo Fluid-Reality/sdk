@@ -281,11 +281,14 @@ state, use the state to choose the next step:
   Run detection again. If it remains in this state, check the connection and
   the dashboard Event Log for an interrupted command or communication error.
 - `Not connected` means the controller did not measure the expected response
-  from that port. Turn the board off before handling the wiring, then confirm
-  that an actuator is connected to the selected port and that its keyed plug is
-  fully seated. Inspect the plug, cable, and port for damage, power the board on,
-  and run detection again. A loose or damaged connection, the wrong selected
-  port, or a disconnected actuator can cause this result.
+  from that port. First confirm that the barrel connector is fully seated and
+  supplying 5 V. Without the 5 V input, connected actuators can be reported as
+  `Not connected`. Turn the board off before handling the actuator wiring, then
+  confirm that an actuator is connected to the selected port and that its keyed
+  plug is fully seated. Inspect the plugs, cables, and port for damage, power the
+  board on, and run detection again. Missing 5 V power, a loose or damaged
+  connection, the wrong selected port, or a disconnected actuator can cause
+  this result.
 - `Error` means the actuator was found, but its measured response is outside the
   normal operating range. This can result from an actuator that needs
   conditioning or from a problem with the actuator, cable, connector, or port.
