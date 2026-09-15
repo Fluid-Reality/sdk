@@ -1,6 +1,6 @@
 # Fluid Reality Terminal Operator and Command Reference
 
-`lansing_terminal` is the command-line operator interface for Fluid Reality
+`fluidreality_terminal` is the command-line operator interface for Fluid Reality
 Lansing and Rockford boards. It provides interactive board control for
 laboratory use and a non-interactive mode for scripts, test fixtures, and
 automated setup benches.
@@ -89,32 +89,32 @@ the terminal uses the source and APIs from the same repository revision.
 
 ```powershell
 git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk\apps\lansing_terminal
+cd sdk\apps\fluidreality_terminal
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ..\..
 python -m pip install -r requirements.txt
-python lansing_terminal.py
+python fluidreality_terminal.py
 ```
 
 ### macOS or Linux
 
 ```bash
 git clone https://github.com/Fluid-Reality/sdk.git
-cd sdk/apps/lansing_terminal
+cd sdk/apps/fluidreality_terminal
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ../..
 python -m pip install -r requirements.txt
-python lansing_terminal.py
+python fluidreality_terminal.py
 ```
 
 To verify that the command-line options are available without opening a board:
 
 ```bash
-python lansing_terminal.py --help
+python fluidreality_terminal.py --help
 ```
 
 ## Starting the terminal
@@ -122,7 +122,7 @@ python lansing_terminal.py --help
 The general invocation is:
 
 ```text
-python lansing_terminal.py [--board lansing|rockford] [--access-token TOKEN] [--port PORT] [--verbose] [-j|--json] [-c COMMANDS]
+python fluidreality_terminal.py [--board lansing|rockford] [--access-token TOKEN] [--port PORT] [--verbose] [-j|--json] [-c COMMANDS]
 ```
 
 With no options, the application starts an interactive disconnected session:
@@ -141,17 +141,17 @@ lansing>
 ### Start disconnected
 
 ```bash
-python lansing_terminal.py
+python fluidreality_terminal.py
 ```
 
 ### Connect during startup
 
 ```powershell
-python lansing_terminal.py --port COM6
+python fluidreality_terminal.py --port COM6
 ```
 
 ```bash
-python lansing_terminal.py --port /dev/ttyACM0
+python fluidreality_terminal.py --port /dev/ttyACM0
 ```
 
 When `--port` succeeds, the terminal validates firmware communication and
@@ -162,7 +162,7 @@ immediately prints a complete `status` snapshot.
 Use `-c` or `--command` for a semicolon-separated command sequence:
 
 ```powershell
-python lansing_terminal.py --port COM6 -c "status; psu on; voltage; psuc on; current"
+python fluidreality_terminal.py --port COM6 -c "status; psu on; voltage; psuc on; current"
 ```
 
 The sequence stops on its first error. The terminal stops any square wave,
@@ -194,7 +194,7 @@ Typical device names:
 | macOS | `/dev/cu.usbmodem1101` |
 | Linux | `/dev/ttyACM0` or `/dev/ttyUSB0` |
 
-If the port is missing, busy, inaccessible, or not a usable Lansing device, the
+If the port is missing, busy, inaccessible, or not a supported controller, the
 failure is reported as a terminal error. An interactive `connect` failure
 returns to the disconnected prompt. A startup `--port` failure exits with
 status `1`.
@@ -219,7 +219,7 @@ In interactive JSON mode, the banner and prompt are suppressed so stdout
 remains machine-readable.
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "diagnose 0"
+python fluidreality_terminal.py -j --port COM6 -c "diagnose 0"
 ```
 
 ### `-c COMMANDS`, `--command COMMANDS`
@@ -228,8 +228,8 @@ Execute one or more terminal commands and exit. Separate commands with
 semicolons inside one shell-quoted argument.
 
 ```bash
-python lansing_terminal.py -c "ports"
-python lansing_terminal.py --port /dev/ttyACM0 -c "psu on; psuc on; detect; states group 0"
+python fluidreality_terminal.py -c "ports"
+python fluidreality_terminal.py --port /dev/ttyACM0 -c "psu on; psuc on; detect; states group 0"
 ```
 
 In text mode, the terminal echoes each command with its current prompt. In JSON
@@ -260,7 +260,7 @@ summary.
 Scripted mode is intended for shell scripts and repeatable bench sequences:
 
 ```powershell
-python lansing_terminal.py --port COM6 -c "psu on; psuc on; detect; diagnose 0"
+python fluidreality_terminal.py --port COM6 -c "psu on; psuc on; detect; diagnose 0"
 ```
 
 It is fail-fast. Any terminal, SDK, firmware, validation, or operating-system
@@ -275,7 +275,7 @@ parse stdout one line at a time.
 PowerShell example:
 
 ```powershell
-python lansing_terminal.py -j -c "ports" | ForEach-Object { $_ | ConvertFrom-Json }
+python fluidreality_terminal.py -j -c "ports" | ForEach-Object { $_ | ConvertFrom-Json }
 ```
 
 Python subprocess example:
@@ -285,7 +285,7 @@ import json
 import subprocess
 
 process = subprocess.Popen(
-    ["python", "lansing_terminal.py", "-j", "--port", "COM6", "-c", "status; diagnose 0"],
+    ["python", "fluidreality_terminal.py", "-j", "--port", "COM6", "-c", "status; diagnose 0"],
     stdout=subprocess.PIPE,
     text=True,
 )
@@ -502,7 +502,7 @@ One object is emitted per port. If no ports are found:
 {"event":"serial_ports","ports":[]}
 ```
 
-If several ports are listed, unplug and reconnect the Lansing board and compare
+If several ports are listed, unplug and reconnect the controller and compare
 the results, or identify the USB serial device through the operating system.
 
 ### `connect`
@@ -1441,7 +1441,7 @@ continuing.
 ### Discover ports as JSON
 
 ```powershell
-python lansing_terminal.py -j -c "ports"
+python fluidreality_terminal.py -j -c "ports"
 ```
 
 Example output:
@@ -1454,7 +1454,7 @@ Example output:
 ### Read a status snapshot
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "status"
+python fluidreality_terminal.py -j --port COM6 -c "status"
 ```
 
 Remember that a successful startup connection already emits a status snapshot;
@@ -1465,17 +1465,17 @@ an explicit `status` command emits another.
 PowerShell:
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "psu on; psuc on; detect 0" |
+python fluidreality_terminal.py -j --port COM6 -c "psu on; psuc on; detect 0" |
     Tee-Object -FilePath detection.ndjson
 if ($LASTEXITCODE -ne 0) {
-    throw "Lansing terminal command failed"
+    throw "Fluid Reality Terminal command failed"
 }
 ```
 
 Bash:
 
 ```bash
-python lansing_terminal.py -j --port /dev/ttyACM0 \
+python fluidreality_terminal.py -j --port /dev/ttyACM0 \
   -c "psu on; psuc on; detect 0" | tee detection.ndjson
 test "${PIPESTATUS[0]}" -eq 0
 ```
@@ -1483,7 +1483,7 @@ test "${PIPESTATUS[0]}" -eq 0
 ### Detect an entire group
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "psu on; psuc on; detect"
+python fluidreality_terminal.py -j --port COM6 -c "psu on; psuc on; detect"
 ```
 
 Bare `detect` is equivalent to `detect group 0`. The terminal emits eight
@@ -1491,7 +1491,7 @@ separate detection results rather than one array.
 
 ### Initialize actuators to a target current delta
 
-The `lansing_terminal` directory includes a target-current automation workflow
+The `fluidreality_terminal` directory includes a target-current automation workflow
 for every supported command environment:
 
 | File | Environment | Implementation |
@@ -1501,7 +1501,7 @@ for every supported command environment:
 | [`initialize_all.bat`](../initialize_all.bat) | Windows Command Prompt | Launcher for `initialize_all.py` |
 | [`initialize_all.py`](../initialize_all.py) | Any supported Python platform | Shared implementation used by `.sh` and `.bat` |
 
-All versions use `lansing_terminal` JSON mode internally. They do not attempt
+All versions use `fluidreality_terminal` JSON mode internally. They do not attempt
 to scrape or interpret human-readable terminal text.
 
 #### What the target means
@@ -1617,8 +1617,8 @@ PowerShell parameters:
 | `-Port` | Yes | — | Serial port such as `COM6` or `/dev/ttyACM0` |
 | `-TargetDeltaMa` | Yes | — | Target current delta, `0.05–3.0 mA` |
 | `-Actuators` | No | `0..23` | Comma-separated PowerShell integer array |
-| `-PythonExecutable` | No | `python` | Python used to run `lansing_terminal.py` |
-| `-TerminalPath` | No | Adjacent `lansing_terminal.py` | Alternate Lansing terminal path |
+| `-PythonExecutable` | No | `python` | Python used to run `fluidreality_terminal.py` |
+| `-TerminalPath` | No | Adjacent `fluidreality_terminal.py` | Alternate Fluid Reality Terminal path |
 | `-MaxInitializationAttempts` | No | `10` | Per-actuator attempt limit, `1–100` |
 | `-MinimumDeltaImprovementMa` | No | `0` | Required strict decrease per attempt |
 | `-LeavePowerOn` | No | Disabled | Skip automatic PSU-connection and PSU shutdown |
@@ -1655,8 +1655,8 @@ Shared options:
 | `--port PORT` | Yes | — | Serial device used by the Lansing controller |
 | `--target-delta-ma MA` | Yes | — | Target current delta, `0.05–3.0 mA` |
 | `--actuators N [N ...]` | No | `0–23` | Space-separated actuator indices |
-| `--python-executable PATH` | No | Current interpreter | Python used to launch `lansing_terminal.py` |
-| `--terminal-path PATH` | No | Adjacent `lansing_terminal.py` | Alternate Lansing terminal path |
+| `--python-executable PATH` | No | Current interpreter | Python used to launch `fluidreality_terminal.py` |
+| `--terminal-path PATH` | No | Adjacent `fluidreality_terminal.py` | Alternate Fluid Reality Terminal path |
 | `--max-initialization-attempts N` | No | `10` | Per-actuator attempt limit; must be at least `1` |
 | `--minimum-delta-improvement-ma MA` | No | `0` | Required strict delta decrease; cannot be negative |
 | `--leave-power-on` | No | Disabled | Skip automatic PSU-connection and PSU shutdown |
@@ -1675,7 +1675,7 @@ initialize_all.bat --help
 
 #### Linux and macOS setup
 
-From the `apps/lansing_terminal` directory:
+From the `apps/fluidreality_terminal` directory:
 
 ```bash
 chmod +x initialize_all.sh
@@ -1699,12 +1699,12 @@ PYTHON_EXECUTABLE=/opt/fluid-reality/bin/python \
 
 This environment variable selects the interpreter that runs
 `initialize_all.py`. The separate `--python-executable` option selects the
-interpreter that the automation process uses to launch `lansing_terminal.py`.
+interpreter that the automation process uses to launch `fluidreality_terminal.py`.
 Normally they should refer to the same environment.
 
 #### Windows Command Prompt setup
 
-From the `apps\lansing_terminal` directory:
+From the `apps\fluidreality_terminal` directory:
 
 ```bat
 initialize_all.bat --port COM6 --target-delta-ma 1.5
@@ -1886,7 +1886,7 @@ and PSU were intentionally left on.
 **The script cannot find Python.** Activate the intended virtual environment,
 set `PYTHON_EXECUTABLE`, or pass `-PythonExecutable`/`--python-executable`.
 
-**The script cannot find `lansing_terminal.py`.** Run from the checked-out application
+**The script cannot find `fluidreality_terminal.py`.** Run from the checked-out application
 directory or provide `-TerminalPath`/`--terminal-path`.
 
 **The board endpoint repeatedly opens and closes.** This is expected. Each attempt
@@ -1913,7 +1913,7 @@ attempt count for a narrower supervised run.
 ### Safe pulse sequence
 
 ```powershell
-python lansing_terminal.py --port COM6 -c "psu on; psuc on; detect 0; set 0 255; set 0 0"
+python fluidreality_terminal.py --port COM6 -c "psu on; psuc on; detect 0; set 0 255; set 0 0"
 ```
 
 This example sends the off command immediately after the on command; for a
@@ -1924,7 +1924,7 @@ delay between commands.
 ### Save diagnostic output
 
 ```powershell
-python lansing_terminal.py -j --port COM6 -c "status; diagnose 0; states group 0" |
+python fluidreality_terminal.py -j --port COM6 -c "status; diagnose 0; states group 0" |
     Set-Content -Encoding utf8 lansing-diagnostic.ndjson
 ```
 
@@ -1955,7 +1955,7 @@ interactive session.
 
 ### Connection opens but firmware validation fails
 
-The selected device may not be a Lansing controller, firmware may not be
+The selected device may not be a supported controller, firmware may not be
 responding, or the serial stream may contain stale binary data. `connect`
 attempts to force text mode before requesting the firmware version. If the
 problem persists:
@@ -2064,7 +2064,7 @@ debug off
 
 ## Related documentation
 
-- [Lansing Terminal overview](../README.md)
+- [Fluid Reality Terminal overview](../README.md)
 - [Fluid Reality SDK overview](../../../README.md)
 - [Python SDK API reference](../../../docs/api_reference.md)
 - [Lansing Development Kit start-here guide](../../../docs/lansing_kit_start_here/README.md)

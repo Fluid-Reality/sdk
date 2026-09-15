@@ -5,7 +5,7 @@
 Detects Lansing actuators and initializes them to a target current delta.
 
 .DESCRIPTION
-Runs lansing_terminal in JSON mode for each requested actuator. Every actuator
+Runs fluidreality_terminal in JSON mode for each requested actuator. Every actuator
 is detected first. If its measured current delta is above TargetDeltaMa, the
 script repeatedly runs:
 
@@ -35,10 +35,10 @@ as Not connected; later conditioned readings classify it as Ready or Error.
 Actuator indices to process. Defaults to all supported indices, 0 through 23.
 
 .PARAMETER PythonExecutable
-Python executable used to run lansing_terminal.py. Defaults to python.
+Python executable used to run fluidreality_terminal.py. Defaults to python.
 
 .PARAMETER TerminalPath
-Path to the Lansing terminal lansing_terminal.py. Defaults to that file beside
+Path to the Fluid Reality Terminal fluidreality_terminal.py. Defaults to that file beside
 this script.
 
 .PARAMETER MaxInitializationAttempts
@@ -119,12 +119,12 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($TerminalPath)) {
-    $TerminalPath = Join-Path -Path $PSScriptRoot -ChildPath "lansing_terminal.py"
+    $TerminalPath = Join-Path -Path $PSScriptRoot -ChildPath "fluidreality_terminal.py"
 }
 $TerminalPath = [System.IO.Path]::GetFullPath($TerminalPath)
 
 if (-not (Test-Path -LiteralPath $TerminalPath -PathType Leaf)) {
-    throw "Lansing terminal was not found at '$TerminalPath'."
+    throw "Fluid Reality Terminal was not found at '$TerminalPath'."
 }
 
 if ($null -eq (Get-Command -Name $PythonExecutable -ErrorAction SilentlyContinue)) {
@@ -150,7 +150,7 @@ function Test-JsonProperty {
     return $null -ne $InputObject.PSObject.Properties[$Name]
 }
 
-function Invoke-LansingTerminal {
+function Invoke-FluidRealityTerminal {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Command,
@@ -268,7 +268,7 @@ try {
         Write-Host "Actuator ${actuator}: detecting..." -ForegroundColor Cyan
         $powerMayBeOn = $true
 
-        $detectionRun = Invoke-LansingTerminal `
+        $detectionRun = Invoke-FluidRealityTerminal `
             -Command "psu on; psuc on; detect $actuator" `
             -SuppressProgress
 
@@ -373,7 +373,7 @@ try {
             # Detection and initialization must run in the same terminal process.
             # A new SDK object begins with Unknown actuator state, and init
             # intentionally requires a successful detection first.
-            $initializationRun = Invoke-LansingTerminal `
+            $initializationRun = Invoke-FluidRealityTerminal `
                 -Command "psu on; psuc on; detect $actuator; init $actuator"
 
             if ($initializationRun.ExitCode -ne 0) {
@@ -499,7 +499,7 @@ finally {
         Write-Host ""
         Write-Host "Turning the PSU connection off, then turning the PSU off..." -ForegroundColor Cyan
         try {
-            $shutdown = Invoke-LansingTerminal `
+            $shutdown = Invoke-FluidRealityTerminal `
                 -Command "psuc off; psu off" `
                 -SuppressProgress
             if ($shutdown.ExitCode -ne 0) {

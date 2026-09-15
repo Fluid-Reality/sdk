@@ -1,4 +1,4 @@
-"""Cross-platform actuator initialization automation for Lansing Terminal."""
+"""Cross-platform actuator initialization automation for Fluid Reality Terminal."""
 
 from __future__ import annotations
 
@@ -413,13 +413,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--python-executable",
         default=sys.executable,
-        help="Python executable used to run lansing_terminal.py (default: current Python)",
+        help="Python executable used to run fluidreality_terminal.py (default: current Python)",
     )
     parser.add_argument(
         "--terminal-path",
         type=Path,
-        default=Path(__file__).with_name("lansing_terminal.py"),
-        help="path to Lansing terminal lansing_terminal.py",
+        default=Path(__file__).with_name("fluidreality_terminal.py"),
+        help="path to Fluid Reality Terminal fluidreality_terminal.py",
     )
     parser.add_argument(
         "--max-initialization-attempts",

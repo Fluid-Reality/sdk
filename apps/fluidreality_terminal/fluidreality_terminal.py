@@ -1,8 +1,8 @@
-"""Interactive terminal app for Lansing boards.
+"""Interactive terminal app for Fluid Reality boards.
 
 Run from the SDK root with:
 
-    python -m apps.lansing_terminal.lansing_terminal
+    python -m apps.fluidreality_terminal.fluidreality_terminal
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from fluid_reality import (
 )
 
 
-PROMPT = "lansing> "
-DISCONNECTED_PROMPT = "lansing(disconnected)> "
+PROMPT = "fluidreality> "
+DISCONNECTED_PROMPT = "fluidreality(disconnected)> "
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -170,7 +170,11 @@ class SquareWaveRunner:
             if not self._restore_debug:
                 board.firmware_debug(True)
             board.flush_debug_lines()
-        self._thread = threading.Thread(target=self._run, name="lansing-square-wave", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run,
+            name="fluidreality-square-wave",
+            daemon=True,
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -268,7 +272,7 @@ class SquareWaveRunner:
             self._restore_debug = None
 
 
-class LansingTerminal(cmd.Cmd):
+class FluidRealityTerminal(cmd.Cmd):
     intro = "Fluid Reality board terminal. Type 'help' for commands."
     prompt = DISCONNECTED_PROMPT
     ruler = "-"
@@ -368,7 +372,7 @@ class LansingTerminal(cmd.Cmd):
     def do_connect(self, arg: str) -> None:
         """connect <port>
 
-        Open a Lansing board connection on the selected serial or TCP endpoint.
+        Open a board connection on the selected serial or TCP endpoint.
         """
 
         parts = shlex.split(arg)
@@ -1602,7 +1606,7 @@ class LansingTerminal(cmd.Cmd):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    shell = LansingTerminal(
+    shell = FluidRealityTerminal(
         board_type=args.board,
         access_token=args.access_token,
         verbose=args.verbose,

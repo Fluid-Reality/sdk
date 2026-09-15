@@ -313,16 +313,16 @@ An offscreen PySide smoke test was also used to verify:
 
 On this Windows machine, the offscreen Qt renderer can display square placeholder glyphs because of headless/offscreen font limitations. Do not confuse that with the macOS screenshot issue; the Mac issue was about real Qt palette/font fallback behavior.
 
-## 2026-08-06 Lansing Terminal Update
+## 2026-08-06 Fluid Reality Terminal Update
 
 The SDK contains a command-line Lansing operator interface. Its entry point is
 intentionally descriptive; do not rename it back to a generic `app.py`:
 
 ```text
-apps/lansing_terminal/lansing_terminal.py
-apps/lansing_terminal/README.md
-apps/lansing_terminal/docs/lansing_terminal_manual.md
-apps/lansing_terminal/requirements.txt
+apps/fluidreality_terminal/fluidreality_terminal.py
+apps/fluidreality_terminal/README.md
+apps/fluidreality_terminal/docs/fluidreality_terminal_manual.md
+apps/fluidreality_terminal/requirements.txt
 ```
 
 Run from the terminal application directory:
@@ -330,7 +330,7 @@ Run from the terminal application directory:
 ```powershell
 python -m pip install -e ..\..
 python -m pip install -r requirements.txt
-python lansing_terminal.py
+python fluidreality_terminal.py
 ```
 
 Terminal behavior and naming decisions:
@@ -353,10 +353,10 @@ Target-current initialization automation is available on every supported
 command environment:
 
 ```text
-apps/lansing_terminal/initialize_all.ps1
-apps/lansing_terminal/initialize_all.sh
-apps/lansing_terminal/initialize_all.bat
-apps/lansing_terminal/initialize_all.py
+apps/fluidreality_terminal/initialize_all.ps1
+apps/fluidreality_terminal/initialize_all.sh
+apps/fluidreality_terminal/initialize_all.bat
+apps/fluidreality_terminal/initialize_all.py
 ```
 
 The PowerShell implementation is native. The `.sh` and `.bat` launchers use the
@@ -368,9 +368,9 @@ PSU off during cleanup unless explicitly configured otherwise.
 
 Documentation layout follows the dashboard pattern:
 
-- `apps/lansing_terminal/README.md` is the concise application overview and
+- `apps/fluidreality_terminal/README.md` is the concise application overview and
   quick start.
-- `apps/lansing_terminal/docs/lansing_terminal_manual.md` is the standalone
+- `apps/fluidreality_terminal/docs/fluidreality_terminal_manual.md` is the standalone
   operator manual, complete command reference, JSON schema reference,
   automation reference, and troubleshooting guide.
 

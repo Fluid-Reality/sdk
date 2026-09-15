@@ -234,19 +234,18 @@ To inspect TX/RX traffic or expose a serial controller over TCP or TLS, use the
 
 ## Terminal
 
-The repository includes a command-line terminal for connecting to a Lansing
-board, controlling the power supply and PSU connection, viewing telemetry and
-configuration, detecting and diagnosing actuators, running initialization and
-recovery, controlling actuator output, and operating square-wave tests. It
-supports interactive use, semicolon-separated command sequences, and
-newline-delimited JSON output for automation.
+The Fluid Reality Terminal connects to Lansing and Rockford controllers,
+controls power and actuator output, displays telemetry and configuration, and
+runs detection, diagnosis, initialization, recovery, and square-wave tests. It
+supports interactive use, command sequences, and newline-delimited JSON output
+for automation.
 
 The terminal directory also includes PowerShell, Linux/macOS shell, and Windows
 batch workflows for detecting actuators and initializing them to a target
 current delta while monitoring improvement and enforcing bounded stop
 conditions.
 
-See [apps/lansing_terminal/README.md](apps/lansing_terminal/README.md) for
+See [apps/fluidreality_terminal/README.md](apps/fluidreality_terminal/README.md) for
 installation, the complete command reference, JSON schemas, automation options,
 and platform-specific usage instructions.
 
