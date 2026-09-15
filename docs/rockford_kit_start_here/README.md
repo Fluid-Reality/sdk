@@ -124,9 +124,7 @@ python -m pip install "fluid-reality[bluetooth]"
 ```
 
 For Wi-Fi credentials, IP settings, access tokens, and TLS configuration, use
-the network configuration application:
-
-[Network Configuration App](../../apps/network_config/README.md)
+the [Fluid Reality Dashboard](../../apps/fluidreality_dashboard/README.md).
 
 ## Rockford Discharge Behavior
 

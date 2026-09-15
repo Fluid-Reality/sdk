@@ -1,4 +1,4 @@
-"""Local TLS credential generation for the Network Setup app."""
+"""Local TLS credential generation for the Fluid Reality Dashboard."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def create_self_signed_tls_files(
     except ImportError as exc:  # pragma: no cover - covered by the app requirements.
         raise RuntimeError(
             "Certificate creation requires the 'cryptography' package. "
-            "Install the Network Setup requirements and try again."
+            "Install the Fluid Reality Dashboard requirements and try again."
         ) from exc
 
     directory = Path(output_directory).expanduser()

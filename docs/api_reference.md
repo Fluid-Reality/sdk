@@ -91,7 +91,7 @@ directly, for example `Lansing("tcp://127.0.0.1:49765")`.
 
 For an encrypted Rockford connection, use a `tls://` endpoint. Verify the server
 with either its CA/certificate file or the SHA-256 fingerprint shown by the
-network configuration app:
+Fluid Reality Dashboard:
 
 ```python
 from fluid_reality import Rockford

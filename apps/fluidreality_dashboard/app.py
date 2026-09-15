@@ -32,7 +32,7 @@ NETWORK_SCAN_TCP_READY_WAIT_S = 8.0
 if str(APPS_ROOT) not in sys.path:
     sys.path.insert(0, str(APPS_ROOT))
 
-from PySide6.QtCore import QPointF, QProcess, QSize, QThread, Qt, Signal
+from PySide6.QtCore import QPointF, QSize, QThread, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFontDatabase,
@@ -88,7 +88,11 @@ from fluid_reality import (
 from fluidreality_dashboard.secret_fields import add_secret_visibility
 from fluidreality_dashboard.icon_buttons import configure_refresh_button
 from fluidreality_dashboard.toggle import LabeledToggle
-from network_config.app import TlsCertificateDialog, security_icon, signal_icon
+from fluidreality_dashboard.network_ui import (
+    TlsCertificateDialog,
+    security_icon,
+    signal_icon,
+)
 
 
 STATE_NAMES = {
@@ -3831,7 +3835,7 @@ class BluetoothConfigDialog(QDialog):
 
 
 class WifiConfigDialog(QDialog):
-    """Dashboard-owned copy of Network Setup's Wi-Fi configuration page."""
+    """Dashboard Wi-Fi configuration page."""
 
     wifi_enabled_requested = Signal(bool)
     scan_requested = Signal()
@@ -6512,24 +6516,6 @@ class DashboardWindow(QMainWindow):
         if dialog is not None:
             dialog.show_error(f"Could not update security settings: {message}")
 
-    def _open_network_setup(self) -> None:
-        app_path = APPS_ROOT / "network_config" / "app.py"
-        if not app_path.is_file():
-            QMessageBox.critical(
-                self,
-                "Network Setup unavailable",
-                f"Could not find the Network Setup application:\n{app_path}",
-            )
-            return
-        started = QProcess.startDetached(sys.executable, [str(app_path)])
-        success = started[0] if isinstance(started, tuple) else bool(started)
-        if not success:
-            QMessageBox.critical(
-                self,
-                "Network Setup unavailable",
-                "Could not start the Network Setup application.",
-            )
-
     def _show_fluid_mesh(self) -> None:
         QMessageBox.information(
             self,
@@ -6766,7 +6752,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_busy_changed(self, text: str) -> None:
         # Connection state is intentionally the only status displayed in the
-        # header, matching Network Setup. Operation progress is shown in its
+        # header. Operation progress is shown in its
         # corresponding control and the event log.
         return None
 

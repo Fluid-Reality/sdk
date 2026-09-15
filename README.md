@@ -189,11 +189,12 @@ for the same application.
 
 ## Network Configuration
 
-The reusable [Network Configuration app](apps/network_config/README.md) can
-configure any board class that inherits from `NetworkBoard`. It discovers the
-board's network interfaces and shows only the relevant Wi-Fi and/or Ethernet
-controls, with per-interface IPv4 settings, TCP binding, TLS, and access-token
-management.
+Configure board networking from the
+[Fluid Reality Dashboard](apps/fluidreality_dashboard/README.md). Its Board
+Tools provide Wi-Fi mode and credentials, per-interface DHCP or static IPv4
+settings, TCP binding, access-token management, and TLS provisioning. The
+Dashboard discovers each board's supported network interfaces and shows the
+controls that apply to that hardware.
 
 ## Advanced Connections
 
@@ -246,8 +247,8 @@ class FutureBoard(WifiBoard, EthernetBoard, BluetoothBoard):
 ```
 
 For an externally managed network, inherit only from `NetworkBoard`; SDK and
-dashboard TCP/TLS connections remain available, but Network Setup does not send
-device-side `NET` commands.
+Dashboard TCP/TLS connections remain available, while device-side `NET`
+configuration controls remain unavailable.
 
 New capability classes should inherit from `Board`, avoid duplicating board
 state, and use `super()` in any constructor they add. This keeps the shared

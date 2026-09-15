@@ -1,10 +1,10 @@
-"""Tests for Network Setup's local TLS credential generator."""
+"""Tests for the Dashboard's local TLS credential generator."""
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
-from apps.network_config.tls_files import (
+from apps.fluidreality_dashboard.tls_files import (
     certificate_server_name,
     create_self_signed_tls_files,
 )
