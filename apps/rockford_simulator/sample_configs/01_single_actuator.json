@@ -1,0 +1,30 @@
+{
+  "schema_version": 3,
+  "kind": "rockford-simulator-design",
+  "board_type": "rockford",
+  "name": "Single Actuator Rockford Board",
+  "psu_voltage_v": 210.0,
+  "psu_voltage_noise_v": 1.25,
+  "psu_base_current_ma": 0.2,
+  "psu_base_current_noise_ma": 0.02,
+  "groups": {
+    "0": {
+      "actuators": {
+        "0": {
+          "configuration_guid": "f83f0aef-6eaf-4ae3-8b1a-540f89da4ffd"
+        }
+      }
+    }
+  },
+  "actuator_configurations": [
+    {
+      "guid": "f83f0aef-6eaf-4ae3-8b1a-540f89da4ffd",
+      "name": "Standard Actuator",
+      "max_starting_current_ma": 3.5,
+      "offline_current_increase_ma_s": 0.0,
+      "running_current_decrease_ma_v_s": 0.0005,
+      "min_running_current_ma": 0.5,
+      "current_noise_ma": 0.01
+    }
+  ]
+}

@@ -253,6 +253,13 @@ New capability classes should inherit from `Board`, avoid duplicating board
 state, and use `super()` in any constructor they add. This keeps the shared
 `Board` base present only once in the method-resolution order.
 
+### Rockford simulator
+
+The self-contained [Rockford Simulator](apps/rockford_simulator/README.md)
+provides a graphical configuration designer and a raw-TCP Rockford device for
+SDK development without physical hardware. Connect to its default endpoint with
+`Rockford("tcp://127.0.0.1:49765")`.
+
 ### Device bridge
 
 To inspect exact TX/RX traffic or expose a physical board to another computer, run

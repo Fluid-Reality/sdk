@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from apps.lansing_simulator.simulator import LansingTcpServer, SimulatedActuator, SimulatorConfig
+import json
+from pathlib import Path
+
+import pytest
+
+from apps.rockford_simulator.simulator import (
+    RockfordDeviceSimulator,
+    RockfordTcpServer,
+    SimulatedActuator,
+    SimulatorConfig,
+)
 from fluid_reality import ActuatorState, Rockford
 
 
@@ -26,7 +36,7 @@ def _config() -> SimulatorConfig:
 
 
 def test_rockford_profile_exposes_current_protocol(tmp_path) -> None:
-    with LansingTcpServer(_config(), port=0, board_type="rockford") as server:
+    with RockfordTcpServer(_config(), port=0) as server:
         with Rockford(server.endpoint, timeout=1.0) as board:
             version = board.firmware_version()
             assert version.firmware == "Rockford"
@@ -77,9 +87,35 @@ def test_rockford_profile_exposes_current_protocol(tmp_path) -> None:
 
 
 def test_rockford_profile_keeps_absent_actuator_not_connected() -> None:
-    with LansingTcpServer(_config(), port=0, board_type="rockford") as server:
+    with RockfordTcpServer(_config(), port=0) as server:
         with Rockford(server.endpoint, timeout=1.0) as board:
             board.power_supply(True)
             board.connect_power(True)
             result = board.detect_actuator_firmware(7)
             assert result.state is ActuatorState.NOT_CONNECTED
+
+
+def test_included_rockford_configuration_loads() -> None:
+    config = SimulatorConfig.load(
+        Path("apps/rockford_simulator/sample_configs/01_single_actuator.json")
+    )
+
+    assert config.name == "Single Actuator Rockford Board"
+    assert tuple(config.actuators) == (0,)
+    assert config.psu_voltage_v == 210.0
+
+
+def test_rockford_simulator_rejects_lansing_profile() -> None:
+    with pytest.raises(ValueError, match="board_type must be 'rockford'"):
+        RockfordDeviceSimulator(lambda _data: None, _config(), board_type="lansing")
+
+
+def test_rockford_configuration_rejects_additional_groups(tmp_path) -> None:
+    source = Path("apps/rockford_simulator/sample_configs/01_single_actuator.json")
+    data = json.loads(source.read_text(encoding="utf-8"))
+    data["groups"]["1"] = {"actuators": {}}
+    invalid = tmp_path / "invalid-rockford.json"
+    invalid.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="group key must be 0"):
+        SimulatorConfig.load(invalid)
