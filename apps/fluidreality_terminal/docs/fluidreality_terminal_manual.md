@@ -2068,4 +2068,4 @@ debug off
 - [Fluid Reality SDK overview](../../../README.md)
 - [Python SDK API reference](../../../docs/api_reference.md)
 - [Lansing Development Kit start-here guide](../../../docs/lansing_kit_start_here/README.md)
-- [Lansing dashboard](../../lansing_dashboard/README.md)
+- [Fluid Reality Dashboard](../../fluidreality_dashboard/README.md)
