@@ -89,9 +89,9 @@ dashboard README:
 
 [Fluid Reality Dashboard README](../../apps/fluidreality_dashboard/README.md)
 
-The full dashboard operator manual is also available here:
+The complete dashboard operator guide is available here:
 
-[Dashboard User Manual](../../apps/fluidreality_dashboard/docs/lansing_dashboard_manual.md)
+[Fluid Reality Dashboard Guide](../../apps/fluidreality_dashboard/README.md)
 
 ## Basic Safety Notes
 
