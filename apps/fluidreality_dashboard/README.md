@@ -1,54 +1,42 @@
 # Fluid Reality Dashboard
 
-Desktop dashboard for Fluid Reality boards implementing the SDK `Board`
-protocol. The UI adapts to capabilities reported by connected firmware, so
-unsupported tools stay hidden or disabled.
-
-After reading the firmware identity, the universal dashboard adopts the
-matching Rockford or Lansing SDK profile while preserving the open transport.
-This keeps board-specific configuration commands and capabilities correct even
-when the connection began through the generic board wrapper.
+Desktop app for configuring and operating Fluid Reality Lansing and Rockford
+controllers. Tools that the connected controller does not support are hidden
+or disabled.
 
 For the complete operator guide, see the
 [dashboard user manual](docs/lansing_dashboard_manual.md).
 
 ## Connections
 
-The Connect window supports USB serial, authenticated TCP, TLS with server
-certificate verification, and Bluetooth LE with discovery, optional pairing,
-and optional access-token authentication. An access token is sent only when one
-is entered. Authentication failures are translated into user-facing messages.
+The Connect window supports USB serial, authenticated TCP, TLS with certificate
+verification, and Bluetooth LE with discovery and optional pairing.
 
 ## Dashboard Layout
 
-The header shows the Fluid Reality logo and the single title `Dashboard`.
 Power, voltage, and current each occupy one metric card. The Power switch turns
-the PSU on or off and also controls PSC when the board exposes a separate power
-connection.
+the power supply on or off and also controls the output connection on Lansing.
 
-Actuator cards are grouped in sets of eight. The `STS` response defines the
-actuator count. Selecting a card chooses the actuator used by the actuator
-tools; selecting a different group runs detection when power is ready.
+Actuator cards are grouped in sets of eight. Select a card to use that actuator
+with the actuator tools. Selecting another group runs detection when power is
+ready.
 
 Board Tools contains Board Settings, Bluetooth Config, Wi-Fi Config, Network
 Config, Security & Encryption, Fluid Mesh, Board Terminal, Update Firmware, and
-Factory Reset. Each button follows the corresponding firmware capability.
+Factory Reset.
 
 ## Detection And Actuator States
 
-When power is on, the dashboard detects the visible actuator group. Firmware
-with `DET>0` runs batch `DT0` using one shared baseline and then runs `DT1` only
-for actuators found present. Results appear as they arrive.
+When power is on, the dashboard detects the visible actuator group and displays
+results as they arrive.
 
 - `Ready` means the actuator passed detection and can be driven.
 - `Error` means current is at or above the configured DT1 error threshold.
-- `Not connected` is assigned only by `DT0` when the minimum detection delta is
-  not reached.
+- `Not connected` means detection did not find an actuator at that port.
 - `N/A` means no detection result is available in the dashboard session.
 
-After detection, a later diagnosis does not change an actuator back to
-`Not connected`; a new `DT0` is required. The default minimum detection delta
-is `0.05 mA`.
+Run detection again after connecting or disconnecting an actuator. The default
+minimum detection delta is `0.05 mA`.
 
 ## Actuator Tools
 
@@ -114,8 +102,7 @@ current delta are plotted live and can be saved to CSV.
 - Board Settings edits Lansing timing or Rockford's per-actuator VT budget,
   plus safety, debug, and supported detection thresholds. Rockford shows the
   limit in V·s, its permanent user-modified audit state, and a hardware-damage
-  warning before any change. Rockford settings are loaded from one complete
-  configuration response, and Save sends only values that actually changed.
+  warning before any change.
 - Bluetooth Config enables Bluetooth, configures security, clears bonds, and
   changes only the suffix of the advertised name. Firmware always adds `FR-`.
 - Wi-Fi Config selects Client or Access Point mode. Client mode scans and joins
@@ -126,17 +113,13 @@ current delta are plotted live and can be saved to CSV.
 - Security & Encryption separately enables access-token authentication and TLS.
   It installs or clears credentials and can create a self-signed certificate.
   Private-key creation uses a Save dialog and confirms before overwriting.
-- Fluid Mesh is enabled only when firmware reports `MESH`; Rockford currently
-  reports no Fluid Mesh support.
+- Fluid Mesh appears only on supported controllers.
 - Board Terminal sends text commands directly through the dashboard's active
-  connection and displays the firmware's raw responses. Automatic status
-  polling—and therefore background voltage and current queries—is paused for
-  the entire time the terminal window is open, then resumes when it closes.
-- Update Firmware is enabled only with `FWU>0` over USB, TCP, or TLS. It uploads
-  a `.bin`, verifies SHA-256, reboots, and reconnects without sending legacy
-  text-recovery bytes during the known reboot. Bluetooth is unsupported.
-- Factory Reset is enabled only with `FCR>0` over USB. After confirmation it
-  erases persistent configuration, reboots, and reconnects automatically.
+  connection and displays the controller's raw responses.
+- Update Firmware installs a `.bin` over USB, TCP, or TLS, verifies it, reboots,
+  and reconnects. Bluetooth firmware updates are unsupported.
+- Factory Reset is available over USB. After confirmation it erases saved
+  configuration, reboots, and reconnects automatically.
 
 ## Run
 

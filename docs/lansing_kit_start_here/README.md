@@ -71,17 +71,8 @@ The same numbering is used everywhere:
 - SDK calls such as `board.detect(0)` and `board.set_actuator(0, 255)` control
   physical driver port `0`.
 
-Most Lansing Development Kit configurations use one populated group with eight
-actuator positions: Group 0, actuators `0` through `7`. Expanded systems can use
-additional groups:
-
-| Dashboard group | Actuator numbers |
-| --- | --- |
-| Group 0 | `0` through `7` |
-| Group 1 | `8` through `15` |
-| Group 2 | `16` through `23` |
-
-If the hardware is physically labeled, follow the hardware labels first.
+The standard kit uses Group 0, actuators `0` through `7`. If the hardware is
+physically labeled, follow those labels.
 
 ## First Software Step
 

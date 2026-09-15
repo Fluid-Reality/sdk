@@ -97,11 +97,6 @@ DT0 result; once an actuator is present, later diagnosis does not return it to
 `Not connected` unless DT0 is run again. `set_actuator()` only works when the
 SDK state is `Ready`. The default minimum DT0 detection delta is `0.05 mA`.
 
-Actuators may need initialization after storage, shipping, or long periods
-without use. If `detect()` returns `Error`, run `board.initialize(actuator)`.
-Initialization drives the actuator through a staged recovery sequence and then
-diagnoses it again. If initialization succeeds, the state changes to `Ready`.
-
 ## Discharge Behavior
 
 Actuator output and discharge are separate phases. Rockford firmware
@@ -177,15 +172,13 @@ examples, see [docs/api_reference.md](docs/api_reference.md).
 
 ## Dashboard
 
-The repository includes a universal desktop dashboard for boards implementing
-the shared `Board` protocol. It connects over USB serial, Bluetooth LE, TCP, or
-TLS and provides the supported power, telemetry, detection, initialization,
-diagnosis, recovery, and square-wave controls.
+The Fluid Reality Dashboard configures and operates Lansing and Rockford
+controllers over USB serial, Bluetooth LE, TCP, or TLS. It provides power,
+telemetry, detection, initialization, diagnosis, recovery, and square-wave
+controls.
 
 See [apps/fluidreality_dashboard/README.md](apps/fluidreality_dashboard/README.md)
-for installation and usage instructions. The historical
-`apps/lansing_dashboard/app.py` command is retained as a compatibility launcher
-for the same application.
+for installation and usage instructions.
 
 ## Network Configuration
 
@@ -198,8 +191,7 @@ controls that apply to that hardware.
 
 ## Advanced Connections
 
-These topics build on the basic USB serial workflow and are intended for
-simulation, remote connections, saved profiles, and transport development.
+Start with USB serial before configuring remote connections or saved profiles.
 
 ### Wi-Fi and saved connection profiles
 
@@ -228,32 +220,6 @@ request operating-system pairing. Profiles may contain an access token and
 should therefore be stored and shared as private configuration. Private keys
 are never part of a client connection profile.
 
-### Network capability classes
-
-`NetworkBoard` marks any board that can be reached over TCP/TLS, including a
-board piggybacking a host whose network is not device-configurable.
-`ConfigurableNetworkBoard` adds interface-neutral IP, TCP server,
-authentication, diagnostics, and TLS provisioning. `WifiBoard` adds Wi-Fi
-discovery and credentials, while `EthernetBoard` adds wired-link control. A
-connection-only, Wi-Fi-only, Ethernet-only, or dual-interface board can
-therefore expose exactly the features its hardware supports. Capability classes
-are designed for cooperative multiple inheritance:
-
-```python
-from fluid_reality import BluetoothBoard, EthernetBoard, WifiBoard
-
-class FutureBoard(WifiBoard, EthernetBoard, BluetoothBoard):
-    actuator_count = 16
-```
-
-For an externally managed network, inherit only from `NetworkBoard`; SDK and
-Dashboard TCP/TLS connections remain available, while device-side `NET`
-configuration controls remain unavailable.
-
-New capability classes should inherit from `Board`, avoid duplicating board
-state, and use `super()` in any constructor they add. This keeps the shared
-`Board` base present only once in the method-resolution order.
-
 ### Rockford simulator
 
 The self-contained [Rockford Simulator](apps/rockford_simulator/README.md)
@@ -263,37 +229,8 @@ SDK development without physical hardware. Connect to its default endpoint with
 
 ### Device bridge
 
-To inspect exact TX/RX traffic or expose a physical board to another computer, run
-the terminal-only [Device Bridge](apps/device_bridge/README.md). It exposes a
-physical serial board through a direct TCP or TLS endpoint and can print or save
-binary-safe hexadecimal and ASCII traces. Its client endpoint can
-require the SDK's network-token authentication handshake. Its SDK-facing
-`DeviceBridgeBoard` inherits from `ConfigurableNetworkBoard`. It handles all
-`NET` commands inside the bridge, exposes its host TCP/TLS listener as the
-configurable interface, and never forwards `NET` traffic to the serial board.
-Its configuration is persisted with timestamped backups.
-
-### Developing simulated-device listeners
-
-The SDK exposes a raw byte-stream listener for device simulators. It performs
-no text decoding or message framing, so protocols can switch freely between
-line commands and binary streaming:
-
-```python
-from fluid_reality import TcpDeviceListener
-
-with TcpDeviceListener("127.0.0.1", 49765) as listener:
-    while True:
-        with listener.accept() as connection:
-            while chunk := connection.read_bytes(4096):
-                response = protocol.feed(chunk)
-                if response:
-                    connection.write_bytes(response)
-```
-
-`write_bytes()` uses `sendall()` semantics. Applications should keep protocol
-buffering, command terminators, binary packet boundaries, and mode transitions
-inside their protocol engine.
+To inspect TX/RX traffic or expose a serial controller over TCP or TLS, use the
+[Device Bridge](apps/device_bridge/README.md).
 
 ## Terminal
 
@@ -327,11 +264,6 @@ python examples\05_status_snapshot.py COM5 --board lansing
 
 Rockford is the default hardware profile. Pass `--board lansing` for Lansing.
 Use `python <example> --help` for each example's complete options.
-
-The universal dashboard identifies connected firmware and adopts the matching
-Rockford or Lansing SDK profile without reopening the transport. Rockford's
-typed configuration snapshot includes its VT budget, audit state, safety and
-debug flags, and detection thresholds reported by current firmware.
 
 - [01_basic_actuator_current.py](examples/01_basic_actuator_current.py):
   power the board, connect the output, detect one actuator, pulse it, and read

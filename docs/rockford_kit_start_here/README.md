@@ -107,14 +107,10 @@ The full dashboard operator manual is also available here:
 
 [Dashboard User Manual](../../apps/fluidreality_dashboard/docs/lansing_dashboard_manual.md)
 
-The dashboard manual retains its historical Lansing filename, but the dashboard
-supports both Lansing and Rockford controllers.
-
 ## Wi-Fi And Bluetooth
 
-Complete the first setup over USB-C. Rockford can then communicate through
-Bluetooth Low Energy or a configured Wi-Fi TCP/TLS connection using the same
-command protocol.
+Complete the first setup over USB-C. You can then connect through Bluetooth Low
+Energy or a configured Wi-Fi TCP/TLS connection.
 
 For Bluetooth support in Python, install the SDK's optional Bluetooth
 dependency:
