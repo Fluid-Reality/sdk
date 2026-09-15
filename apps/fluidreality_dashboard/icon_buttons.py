@@ -1,4 +1,4 @@
-"""Shared icon-button styling for Fluid Reality desktop apps."""
+"""Icon-button styling for the Fluid Reality Dashboard."""
 
 from pathlib import Path
 

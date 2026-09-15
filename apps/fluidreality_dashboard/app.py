@@ -24,7 +24,7 @@ from typing import Any
 APP_ROOT = Path(__file__).resolve().parent
 APPS_ROOT = APP_ROOT.parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
-APP_ICON_PATH = APPS_ROOT / "shared" / "assets" / "fluid-reality-icon.png"
+APP_ICON_PATH = APP_ROOT / "assets" / "fluid-reality-icon.png"
 CONNECTED_ICON_PATH = APP_ROOT / "assets" / "connected.svg"
 COPY_ICON_PATH = APP_ROOT / "assets" / "copy.svg"
 NETWORK_CONNECT_TIMEOUT_S = 3.0
@@ -85,9 +85,9 @@ from fluid_reality import (
     discover_bluetooth_boards,
     list_ports,
 )
-from shared.secret_fields import add_secret_visibility
-from shared.icon_buttons import configure_refresh_button
-from shared.toggle import LabeledToggle
+from fluidreality_dashboard.secret_fields import add_secret_visibility
+from fluidreality_dashboard.icon_buttons import configure_refresh_button
+from fluidreality_dashboard.toggle import LabeledToggle
 from network_config.app import TlsCertificateDialog, security_icon, signal_icon
 
 

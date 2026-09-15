@@ -37,7 +37,7 @@ from apps.fluidreality_dashboard.app import (
     describe_connection_error,
     power_connection_is_ready,
 )
-from shared.toggle import LabeledToggle
+from fluidreality_dashboard.toggle import LabeledToggle
 
 
 class FakeTransport:

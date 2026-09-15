@@ -1,4 +1,4 @@
-"""Small branded toggle control shared by Fluid Reality desktop apps."""
+"""Branded toggle control for the Lansing Simulator."""
 
 from __future__ import annotations
 

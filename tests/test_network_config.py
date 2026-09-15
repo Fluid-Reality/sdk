@@ -30,7 +30,7 @@ from apps.network_config.app import (
     signal_level,
 )
 from apps.device_bridge.bridge import DeviceBridgeBoard
-from shared.toggle import LabeledToggle
+from network_config.toggle import LabeledToggle
 from fluid_reality import (
     Board,
     ConfigurableNetworkBoard,

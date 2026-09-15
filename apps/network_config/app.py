@@ -17,9 +17,9 @@ from urllib.parse import urlsplit
 APP_ROOT = Path(__file__).resolve().parent
 APPS_ROOT = APP_ROOT.parent
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
-APP_ICON_PATH = APPS_ROOT / "shared" / "assets" / "fluid-reality-icon.png"
-COPY_ICON_PATH = APPS_ROOT / "fluidreality_dashboard" / "assets" / "copy.svg"
-NEW_FILE_ICON_PATH = APPS_ROOT / "shared" / "assets" / "new-file.svg"
+APP_ICON_PATH = APP_ROOT / "assets" / "fluid-reality-icon.png"
+COPY_ICON_PATH = APP_ROOT / "assets" / "copy.svg"
+NEW_FILE_ICON_PATH = APP_ROOT / "assets" / "new-file.svg"
 if str(APPS_ROOT) not in sys.path:
     sys.path.insert(0, str(APPS_ROOT))
 
@@ -67,9 +67,9 @@ from network_config.tls_files import (
     certificate_server_name,
     create_self_signed_tls_files,
 )
-from shared.icon_buttons import configure_refresh_button
-from shared.secret_fields import add_secret_visibility
-from shared.toggle import LabeledToggle
+from network_config.icon_buttons import configure_refresh_button
+from network_config.secret_fields import add_secret_visibility
+from network_config.toggle import LabeledToggle
 
 
 def form_label(text: str) -> QLabel:

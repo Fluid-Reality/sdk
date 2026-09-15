@@ -23,11 +23,11 @@ if str(APPS_ROOT) not in sys.path:
     sys.path.insert(0, str(APPS_ROOT))
 STANDARD_CONFIG_DIR = APP_ROOT / "standard_configs"
 LOGO_PATH = APP_ROOT.parent / "lansing_dashboard" / "assets" / "fluid_reality_logo_transparent.png"
-APP_ICON_PATH = APP_ROOT.parent / "shared" / "assets" / "fluid-reality-icon.png"
+APP_ICON_PATH = APP_ROOT / "fluid-reality-icon.png"
 GROUP_COUNT = 3
 ACTUATORS_PER_GROUP = 8
 
-from shared.toggle import LabeledToggle
+from lansing_simulator.toggle import LabeledToggle
 
 
 @dataclass
