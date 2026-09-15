@@ -208,31 +208,47 @@ Run the example with `--help` to see all connection and pulse options.
 
 ## Core Concepts
 
-Actuators have SDK states:
+After connecting to the controller, call `board.power_on()`. Detect each
+actuator before using it:
 
-- `Unknown`: the default state when the board object is created.
-- `Ready`: the actuator has been detected and is safe to drive normally.
-- `Present`: DT0 found a meaningful current change and DT1 has not completed.
-- `Not connected`: DT0 did not measure the configured minimum current delta.
-- `Error`: the current delta is too high for normal operation. Run
-  `board.initialize(actuator)` before trying to use the actuator. Initialization
-  runs a staged recovery sequence and then diagnoses the actuator again. If it
-  returns `Ready`, the actuator can be used normally. If it still returns
-  `Error`, leave the actuator off, check the physical connection, and contact
-  Fluid Reality support before continuing.
+```python
+state = board.detect(0)
+```
 
-Before driving an actuator, call `board.detect(actuator)`. Current Rockford
-firmware performs DT0 and DT1 detection on the board. `Not connected` is only a
-DT0 result; once an actuator is present, later diagnosis does not return it to
-`Not connected` unless DT0 is run again. `set_actuator()` only works when the
-SDK state is `Ready`. The default minimum DT0 detection delta is `0.05 mA`.
+Detection records one of these states:
+
+- `Unknown`: the actuator has not been detected during this connection.
+- `Present`: an actuator was found, but detection has not finished evaluating
+  it.
+- `Ready`: detection passed and the actuator can be driven.
+- `Not connected`: no actuator was found at that port.
+- `Error`: the actuator was found but is outside the normal operating range.
+  Run `board.initialize(actuator)` before using it. If it remains in `Error`,
+  leave it off, check the connection, and contact Fluid Reality support.
+
+Use `board.set_actuator(actuator, value)` to control actuators one at a time.
+The actuator must be `Ready`. Values range from `0` to `255`; `0` stops the
+actuator and starts its discharge phase:
+
+```python
+board.set_actuator(0, 255)
+board.set_actuator(0, 0)
+```
+
+For frequent updates or coordinated motion, use streaming. Enter stream mode,
+send values with `stream_actuator()` or `stream_values()`, and always exit stream
+mode when finished. Stream only to actuators that have passed detection. The
+`stream_sine()` helper generates a timed sine wave.
 
 ## Discharge Behavior
 
-Actuator output and discharge are separate phases. Rockford firmware
-integrates each actuator's signed voltage-time exposure and maintains a 1:1
-forward/reverse balance. Its default per-actuator budget is 10,000 V·s,
-equivalent to 200 V for 50 seconds.
+Discharge reverses accumulated drive and returns the actuator toward a neutral
+state. This balancing helps maintain performance and extend actuator life.
+
+Actuator output and discharge are separate phases. Rockford firmware integrates
+each actuator's signed voltage-time exposure and maintains a 1:1 forward/reverse
+balance. Its default per-actuator budget is 10,000 V·s, equivalent to 200 V for
+50 seconds.
 
 When Rockford receives a normal off command, it immediately applies full
 reverse until the accumulated VT is cancelled. If an actuator exhausts its VT
