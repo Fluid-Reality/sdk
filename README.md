@@ -19,26 +19,178 @@ python -m pip install --upgrade pip
 python -m pip install fluid-reality
 ```
 
-## Find the Serial Port
+## Connecting to the Controller
 
-Connect the controller to the computer over USB, then list the serial devices
-visible to Python:
+A new controller is available over USB serial by default. Connect by serial
+first, then use the
+[Dashboard](apps/fluidreality_dashboard/README.md#board-tools) to configure
+Bluetooth, Wi-Fi, TCP, access-token authentication, or TLS. The SDK can then
+connect by serial, TCP/TLS, or Bluetooth.
+
+You can pass an endpoint directly to `Rockford(...)` or `Lansing(...)`, or save
+the connection settings in a YAML connection file. A connection file keeps the
+transport, address, and authentication settings together so applications and
+examples can open the same controller consistently:
+
+```python
+from fluid_reality import Rockford
+
+with Rockford.from_connection_file("rockford.connection.yaml") as board:
+    print(board.status())
+```
+
+Use the board as a context manager, as shown above, so the connection closes
+cleanly.
+
+Every connection file starts with these fields:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: serial  # serial, tcp, tls, or bluetooth
+```
+
+The remaining fields depend on the transport. Connection files can contain
+access tokens, so store and share them as private configuration. They never
+contain TLS private keys.
+
+### Serial
+
+Serial is the only connection method available before the controller is
+configured. Connect the controller to the computer over USB, then list the
+serial devices visible to Python:
 
 ```bash
 python -m serial.tools.list_ports
 ```
 
-Use the device name shown by that command when creating `Rockford(...)` or
-`Lansing(...)`. Rockford is the default profile in the included examples. The
-exact device name depends on the operating system:
+Typical device names are `COM4` on Windows, `/dev/cu.usbmodem...` on macOS, and
+`/dev/ttyACM...` or `/dev/ttyUSB...` on Linux. If several devices are listed,
+unplug the controller, run the command again, reconnect it, and look for the new
+entry.
 
-- Windows usually reports names such as `COM4` or `COM16`.
-- macOS usually reports names under `/dev/cu.*`, for example a USB modem port.
-- Linux usually reports names under `/dev/tty*`, for example a USB ACM or USB
-  serial device.
+Connect directly:
 
-If more than one device is listed, unplug the board, run the command again,
-then plug it back in and look for the new entry.
+```python
+from fluid_reality import Rockford
+
+with Rockford("COM18") as board:
+    print(board.status())
+```
+
+A serial connection file uses `serial_port` and an optional `baudrate`. The
+default baud rate is `250000`:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: serial
+serial_port: COM18
+baudrate: 250000
+```
+
+### TCP/TLS
+
+Configure Wi-Fi, the TCP server, access-token authentication, and TLS from the
+[Dashboard](apps/fluidreality_dashboard/README.md#board-tools) while connected
+over USB serial. TCP sends unencrypted traffic. TLS encrypts the connection
+and should verify the controller certificate.
+
+Connect directly over TCP:
+
+```python
+from fluid_reality import Rockford
+
+with Rockford(
+    "tcp://192.168.1.64:49765",
+    network_token="your-device-token",
+) as board:
+    print(board.network_status())
+```
+
+A TCP connection file uses `host`, `port`, and an optional `access_token`:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: tcp
+host: 192.168.1.64
+port: 49765
+access_token: your-device-token
+```
+
+Connect directly over TLS with the public certificate created or installed in
+the Dashboard:
+
+```python
+from fluid_reality import Rockford
+
+with Rockford(
+    "tls://192.168.1.64:49765",
+    network_token="your-device-token",
+    tls_ca_file="rockford-certificate.pem",
+    tls_server_hostname="rockford.local",
+) as board:
+    print(board.network_status())
+```
+
+A TLS connection file adds a `tls` section. `certificate_file` may be absolute
+or relative to the connection file. `server_hostname` is the name in the
+certificate:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: tls
+host: 192.168.1.64
+port: 49765
+access_token: your-device-token
+tls:
+  certificate_file: rockford-certificate.pem
+  server_hostname: rockford.local
+  verify_hostname: true
+```
+
+The `tls` section can use `certificate` instead of `certificate_file` to embed
+the PEM certificate in the YAML file. Certificate and hostname verification are
+enabled by default.
+
+For local development, the
+[Rockford Simulator](apps/rockford_simulator/README.md) listens at
+`tcp://127.0.0.1:49765`. The [Device Bridge](apps/device_bridge/README.md) can
+expose a serial controller over TCP or TLS and capture TX/RX traffic.
+
+### Bluetooth
+
+Enable and configure Bluetooth from the
+[Dashboard](apps/fluidreality_dashboard/README.md#board-tools) while connected
+over USB serial. Install the optional Bluetooth dependency:
+
+```bash
+python -m pip install "fluid-reality[bluetooth]"
+```
+
+Use [09_bluetooth_discovery.py](examples/09_bluetooth_discovery.py) to discover
+nearby controllers and connect to one by its displayed index:
+
+```bash
+python examples\09_bluetooth_discovery.py
+python examples\09_bluetooth_discovery.py --connect 0 --pair
+```
+
+Run the example with `--help` for discovery timeout and access-token options.
+
+A Bluetooth connection file uses `device`, optional operating-system pairing,
+and an optional access token:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: bluetooth
+device: FR-Rockford-3D3731
+pair: true
+access_token: optional-token
+```
 
 ## Touch Validation Example
 
@@ -55,10 +207,6 @@ python examples\01_basic_actuator_current.py COM18 --actuator 0
 Run the example with `--help` to see all connection and pulse options.
 
 ## Core Concepts
-
-`Rockford(endpoint)` and `Lansing(endpoint)` select the hardware profile. An
-endpoint can be USB serial, TCP, TLS, or Bluetooth. Use boards as context
-managers so the transport closes cleanly.
 
 Rockford supports eight actuator channels, numbered `0` through `7`. The
 standard Rockford controller has five built-in actuator ports for channels `0`
@@ -123,47 +271,6 @@ damage actuators or board electronics. Factory reset restores 10,000 V·s but
 does not erase that audit marker. See `examples/13_vt_budget.py` for the guarded
 configuration flow.
 
-## Bluetooth
-
-After confirming the controller works over USB serial, Rockford can use the same
-command protocol over Bluetooth Low Energy:
-
-Install the optional Bleak dependency:
-
-```bash
-python -m pip install "fluid-reality[bluetooth]"
-```
-
-Use [09_bluetooth_discovery.py](examples/09_bluetooth_discovery.py) to discover
-nearby Fluid Reality controllers:
-
-```bash
-python examples\09_bluetooth_discovery.py
-```
-
-The program prints each controller with an index. Connect to one by passing its
-index, and add `--pair` if operating-system pairing is required:
-
-```bash
-python examples\09_bluetooth_discovery.py --connect 0 --pair
-```
-
-Run the example with `--help` to see the discovery timeout and access-token
-options.
-
-Bluetooth connection files are also supported:
-
-```yaml
-format: fluid-reality-connection
-version: 1
-transport: bluetooth
-device: Rockford-3D3731
-pair: true
-access_token: optional-token
-```
-
-Open one with `Rockford.from_connection_file("rockford-bluetooth.yaml")`.
-
 ## API Reference
 
 For the complete customer development API reference, including all public
@@ -179,58 +286,6 @@ controls.
 
 See [apps/fluidreality_dashboard/README.md](apps/fluidreality_dashboard/README.md)
 for installation and usage instructions.
-
-## Network Configuration
-
-Configure board networking from the
-[Fluid Reality Dashboard](apps/fluidreality_dashboard/README.md). Its Board
-Tools provide Wi-Fi mode and credentials, per-interface DHCP or static IPv4
-settings, TCP binding, access-token management, and TLS provisioning. The
-Dashboard discovers each board's supported network interfaces and shows the
-controls that apply to that hardware.
-
-## Advanced Connections
-
-Start with USB serial before configuring remote connections or saved profiles.
-
-### Wi-Fi and saved connection profiles
-
-Rockford firmware 1.1 can also expose the physical board directly over Wi-Fi.
-Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
-
-```python
-from fluid_reality import Rockford
-
-board = Rockford("tcp://192.168.1.64:49765", network_token="your-device-token")
-print(board.network_status())
-```
-
-Connections can also be stored in a validated YAML profile and opened directly:
-
-```python
-from fluid_reality import Rockford
-
-board = Rockford.from_connection_file("rockford.connection.yaml")
-```
-
-The profile supports serial, Bluetooth LE, TCP, and TLS transports. A TLS
-profile can embed the public server certificate so it remains portable, or
-reference a certificate file relative to the YAML file. Bluetooth profiles can
-request operating-system pairing. Profiles may contain an access token and
-should therefore be stored and shared as private configuration. Private keys
-are never part of a client connection profile.
-
-### Rockford simulator
-
-The self-contained [Rockford Simulator](apps/rockford_simulator/README.md)
-provides a graphical configuration designer and a raw-TCP Rockford device for
-SDK development without physical hardware. Connect to its default endpoint with
-`Rockford("tcp://127.0.0.1:49765")`.
-
-### Device bridge
-
-To inspect TX/RX traffic or expose a serial controller over TCP or TLS, use the
-[Device Bridge](apps/device_bridge/README.md).
 
 ## Terminal
 
