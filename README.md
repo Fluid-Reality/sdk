@@ -269,6 +269,39 @@ damage actuators or board electronics. Factory reset restores 10,000 V·s but
 does not erase that audit marker. See `examples/13_vt_budget.py` for the guarded
 configuration flow.
 
+## Recovering an Actuator After Detection
+
+Do not drive an actuator unless detection ends in `Ready`. If it ends in another
+state, use the state to choose the next step:
+
+- `Unknown` means detection has not completed during the current connection.
+  Make sure the board is powered on, then use **Redetect all actuators** in the
+  dashboard.
+- `Present` means the actuator was found, but its evaluation did not finish.
+  Run detection again. If it remains in this state, check the connection and
+  the dashboard Event Log for an interrupted command or communication error.
+- `Not connected` means the controller did not measure the expected response
+  from that port. Turn the board off before handling the wiring, then confirm
+  that an actuator is connected to the selected port and that its keyed plug is
+  fully seated. Inspect the plug, cable, and port for damage, power the board on,
+  and run detection again. A loose or damaged connection, the wrong selected
+  port, or a disconnected actuator can cause this result.
+- `Error` means the actuator was found, but its measured response is outside the
+  normal operating range. This can result from an actuator that needs
+  conditioning or from a problem with the actuator, cable, connector, or port.
+  Leave normal output off. In the dashboard, select the actuator and run
+  **Initialize**, followed by **Diagnose**. If Diagnose still ends in `Error`,
+  run **Recover**, then run **Diagnose** again to update the state.
+
+If an actuator still does not reach `Ready`, turn the board off and compare it
+with a known-good actuator and port to isolate the cable, actuator, or controller
+connection. Stop using any damaged component. If the problem remains, save the
+dashboard results and Event Log and contact Fluid Reality support.
+
+See the dashboard's
+[Actuator Tools](apps/fluidreality_dashboard/README.md#actuator-tools) for
+Initialize, Diagnose, and Recover instructions.
+
 ## API Reference
 
 For the complete customer development API reference, including all public
