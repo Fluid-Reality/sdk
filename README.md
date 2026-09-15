@@ -50,7 +50,6 @@ down even if an error occurs.
 
 ```powershell
 python examples\01_basic_actuator_current.py COM18 --actuator 0
-python examples\01_basic_actuator_current.py COM5 --board lansing --actuator 0
 ```
 
 Run the example with `--help` to see all connection and pulse options.
@@ -105,8 +104,7 @@ diagnoses it again. If initialization succeeds, the state changes to `Ready`.
 
 ## Discharge Behavior
 
-Actuator output and discharge are separate phases. Lansing uses its existing
-maximum-active and maximum-discharge times. Rockford firmware 1.1 instead
+Actuator output and discharge are separate phases. Rockford firmware
 integrates each actuator's signed voltage-time exposure and maintains a 1:1
 forward/reverse balance. Its default per-actuator budget is 10,000 V·s,
 equivalent to 200 V for 50 seconds.
@@ -141,14 +139,22 @@ Install the optional Bleak dependency:
 python -m pip install "fluid-reality[bluetooth]"
 ```
 
-```python
-from fluid_reality import Rockford, discover_bluetooth_boards
+Use [09_bluetooth_discovery.py](examples/09_bluetooth_discovery.py) to discover
+nearby Fluid Reality controllers:
 
-devices = discover_bluetooth_boards(timeout=5)
-with Rockford(devices[0].endpoint, network_token="optional-token") as board:
-    print(board.firmware_version())
-    print(board.status())
+```bash
+python examples\09_bluetooth_discovery.py
 ```
+
+The program prints each controller with an index. Connect to one by passing its
+index, and add `--pair` if operating-system pairing is required:
+
+```bash
+python examples\09_bluetooth_discovery.py --connect 0 --pair
+```
+
+Run the example with `--help` to see the discovery timeout and access-token
+options.
 
 Bluetooth connection files are also supported:
 
