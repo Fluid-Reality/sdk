@@ -208,11 +208,6 @@ Run the example with `--help` to see all connection and pulse options.
 
 ## Core Concepts
 
-Rockford supports eight actuator channels, numbered `0` through `7`. The
-standard Rockford controller has five built-in actuator ports for channels `0`
-through `4`. The optional three-actuator expansion card connects to `EXT CONN`
-and adds physical ports for channels `5` through `7`.
-
 Actuators have SDK states:
 
 - `Unknown`: the default state when the board object is created.
