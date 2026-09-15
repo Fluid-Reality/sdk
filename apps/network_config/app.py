@@ -60,7 +60,6 @@ from fluid_reality import (
     NetworkBoard,
     WifiBoard,
     discover_bluetooth_boards,
-    is_virtual_port,
     list_ports,
 )
 from network_config.tls_files import (
@@ -260,7 +259,7 @@ class ConnectionDialog(QDialog):
     def refresh_serial_ports(self) -> None:
         current = self.serial_port.currentText().strip()
         try:
-            ports = [port for port in list_ports() if not is_virtual_port(port)]
+            ports = list_ports()
         except Exception:
             ports = []
         if current and current not in ports:

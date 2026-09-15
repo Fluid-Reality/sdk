@@ -15,8 +15,8 @@ from apps.lansing_simulator.simulator import (
     LansingTcpServer,
     SimulatorConfig,
 )
-from fluid_reality import Lansing, TransportError, is_virtual_port, list_ports
-from fluid_reality.transport import SerialTransport, VIRTUAL_PORTS_ENV
+from fluid_reality import Lansing, TransportError, list_ports
+from fluid_reality.transport import SerialTransport
 
 
 def _config() -> SimulatorConfig:
@@ -31,21 +31,20 @@ def _config() -> SimulatorConfig:
 
 
 @contextmanager
-def _tcp_simulator(monkeypatch, *, response_delay_s: float = 0.0):
+def _tcp_simulator(*, response_delay_s: float = 0.0):
     with LansingTcpServer(
         _config(),
         port=0,
         response_delay_s=response_delay_s,
     ) as server:
-        monkeypatch.setenv(VIRTUAL_PORTS_ENV, f"COM66={server.endpoint}")
         yield server.endpoint
 
 
-def test_existing_lansing_call_is_transparently_redirected(monkeypatch):
-    with _tcp_simulator(monkeypatch):
-        with Lansing("COM66", timeout=0.5) as board:
+def test_lansing_connects_to_tcp_endpoint():
+    with _tcp_simulator() as endpoint:
+        with Lansing(endpoint, timeout=0.5) as board:
             assert board.transport.redirected is True
-            assert board.transport.port == "COM66"
+            assert board.transport.port == endpoint
             assert board.firmware_version().firmware == "Lansing"
 
             board.psu_on()
@@ -58,17 +57,16 @@ def test_existing_lansing_call_is_transparently_redirected(monkeypatch):
             assert board.get_actuator(7) == 233
 
 
-def test_tcp_endpoint_can_be_passed_as_the_existing_port_argument(monkeypatch):
-    with _tcp_simulator(monkeypatch) as configured_endpoint:
-        monkeypatch.delenv(VIRTUAL_PORTS_ENV)
+def test_tcp_endpoint_can_be_passed_as_the_existing_port_argument():
+    with _tcp_simulator() as configured_endpoint:
         with Lansing(configured_endpoint, timeout=0.5) as board:
             assert board.transport.endpoint == configured_endpoint
             assert board.firmware_version().firmware == "Lansing"
 
 
-def test_tcp_redirect_preserves_read_timeout(monkeypatch):
-    with _tcp_simulator(monkeypatch, response_delay_s=0.2):
-        with Lansing("COM66", timeout=0.03) as board:
+def test_tcp_redirect_preserves_read_timeout():
+    with _tcp_simulator(response_delay_s=0.2) as endpoint:
+        with Lansing(endpoint, timeout=0.03) as board:
             with pytest.raises(TransportError, match="Timed out"):
                 board.version()
 
@@ -105,31 +103,22 @@ def test_tcp_connect_timeout_is_separate_from_command_timeout(monkeypatch):
         transport.close()
 
 
-def test_tcp_redirect_rejects_invalid_endpoint(monkeypatch):
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=http://127.0.0.1:49765")
-
-    with pytest.raises(TransportError, match="expected tcp://host:port"):
-        Lansing("COM66")
-
-
 @pytest.mark.parametrize(
-    "mapping",
+    "endpoint",
     [
-        "COM66=tcp://127.0.0.1:not-a-port",
-        "COM66=tcp://127.0.0.1:49765/path",
-        "missing-equals-sign",
+        "tcp://127.0.0.1:not-a-port",
+        "tcp://127.0.0.1:49765/path",
     ],
 )
-def test_virtual_port_mapping_rejects_malformed_values(monkeypatch, mapping):
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, mapping)
+def test_tcp_transport_rejects_malformed_endpoints(endpoint):
     with pytest.raises(TransportError):
-        list_ports()
+        Lansing(endpoint)
 
 
 def test_tcp_redirect_reports_remote_disconnect(monkeypatch):
     server = socket.create_server(("127.0.0.1", 0))
     host, port = server.getsockname()
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, f"COM66=tcp://{host}:{port}")
+    endpoint = f"tcp://{host}:{port}"
 
     def disconnect() -> None:
         connection, _address = server.accept()
@@ -138,13 +127,13 @@ def test_tcp_redirect_reports_remote_disconnect(monkeypatch):
 
     thread = threading.Thread(target=disconnect, daemon=True)
     thread.start()
-    with Lansing("COM66", timeout=0.2) as board:
+    with Lansing(endpoint, timeout=0.2) as board:
         with pytest.raises(TransportError, match="Could not read from transport"):
             board.version()
     thread.join(timeout=1.0)
 
 
-def test_list_ports_combines_serial_ports_and_endpoint_aliases(monkeypatch):
+def test_list_ports_returns_physical_serial_ports(monkeypatch):
     class Port:
         def __init__(self, device: str) -> None:
             self.device = device
@@ -153,27 +142,10 @@ def test_list_ports_combines_serial_ports_and_endpoint_aliases(monkeypatch):
         "serial.tools.list_ports.comports",
         lambda: [Port("COM1"), Port("COM2")],
     )
-    monkeypatch.setenv(
-        VIRTUAL_PORTS_ENV,
-        "COM66=tcp://127.0.0.1:49765;SIM2=tcp://127.0.0.1:8766",
-    )
-
-    assert list_ports() == ["COM1", "COM2", "COM66", "SIM2"]
-    assert is_virtual_port("com66") is True
-    assert is_virtual_port("COM1") is False
+    assert list_ports() == ["COM1", "COM2"]
 
 
-def test_list_ports_omits_unconfigured_tcp_endpoint(monkeypatch):
-    class Port:
-        device = "COM1"
-
-    monkeypatch.setattr("serial.tools.list_ports.comports", lambda: [Port()])
-    monkeypatch.delenv(VIRTUAL_PORTS_ENV, raising=False)
-
-    assert list_ports() == ["COM1"]
-
-
-def test_unmapped_com_port_uses_physical_serial(monkeypatch):
+def test_com_port_uses_physical_serial(monkeypatch):
     opened: dict[str, object] = {}
 
     class FakeSerial:
@@ -185,7 +157,6 @@ def test_unmapped_com_port_uses_physical_serial(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setenv(VIRTUAL_PORTS_ENV, "COM66=tcp://127.0.0.1:49765")
     monkeypatch.setattr("serial.Serial", FakeSerial)
 
     transport = SerialTransport("COM9", timeout=0.5)

@@ -200,33 +200,6 @@ management.
 These topics build on the basic USB serial workflow and are intended for
 simulation, remote connections, saved profiles, and transport development.
 
-### Simulator port aliases
-
-Existing applications can expose a Lansing TCP simulator under a selectable
-port name without code changes. Set `FLUID_REALITY_VIRTUAL_PORTS` before starting
-the application:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-```
-
-Only `Lansing("COM66")` uses the mapped TCP endpoint. Selecting another COM
-port opens that physical serial port normally. Separate multiple mappings with
-semicolons. See
-[apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
-simulator command and platform-specific examples.
-
-List physical serial ports together with configured aliases:
-
-```python
-from fluid_reality import list_ports
-
-print(list_ports())
-# Example: ["COM1", "COM2", "COM66"]
-```
-
-Every returned value can be passed directly to `Lansing(...)`.
-
 ### Wi-Fi and saved connection profiles
 
 Rockford firmware 1.1 can also expose the physical board directly over Wi-Fi.
@@ -283,9 +256,9 @@ state, and use `super()` in any constructor they add. This keeps the shared
 ### Device bridge
 
 To inspect exact TX/RX traffic or expose a physical board to another computer, run
-the terminal-only [Device Bridge](apps/device_bridge/README.md). It maps
-an SDK virtual alias to a physical serial port and can print or save binary-safe
-hexadecimal and ASCII traces. Its client endpoint can use raw TCP or TLS and can
+the terminal-only [Device Bridge](apps/device_bridge/README.md). It exposes a
+physical serial board through a direct TCP or TLS endpoint and can print or save
+binary-safe hexadecimal and ASCII traces. Its client endpoint can
 require the SDK's network-token authentication handshake. Its SDK-facing
 `DeviceBridgeBoard` inherits from `ConfigurableNetworkBoard`. It handles all
 `NET` commands inside the bridge, exposes its host TCP/TLS listener as the

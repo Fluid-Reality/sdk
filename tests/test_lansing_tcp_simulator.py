@@ -61,15 +61,14 @@ def _receive_lines(connection: socket.socket, count: int) -> list[bytes]:
     return lines[:count]
 
 
-def test_sdk_lansing_port_call_is_transparently_redirected(tcp_server, monkeypatch):
-    monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"THIS-PORT-IS-INTENTIONALLY-IGNORED={tcp_server.endpoint}")
+def test_sdk_lansing_connects_to_simulator_endpoint(tcp_server):
 
-    with Lansing("THIS-PORT-IS-INTENTIONALLY-IGNORED", timeout=0.5) as board:
+    with Lansing(tcp_server.endpoint, timeout=0.5) as board:
         version = board.firmware_version()
         assert version.firmware == "Lansing"
         assert version.version == "0.1"
         assert board.transport.redirected is True
-        assert board.transport.port == "THIS-PORT-IS-INTENTIONALLY-IGNORED"
+        assert board.transport.port == tcp_server.endpoint
         assert board.transport.endpoint == tcp_server.endpoint
 
 
@@ -122,8 +121,7 @@ def test_stream_mode_exit_restores_text_framing(tcp_server):
 
 
 def test_sdk_read_timeout(tcp_server, monkeypatch):
-    monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={tcp_server.endpoint}")
-    with Lansing("IGNORED", timeout=0.03) as board:
+    with Lansing(tcp_server.endpoint, timeout=0.03) as board:
         # A complete command is deliberately not sent, so the engine has no response.
         board.transport.write_bytes(b"VE")
         with pytest.raises(TransportError, match="Timed out"):
@@ -143,11 +141,10 @@ def test_client_disconnect_does_not_terminate_server(tcp_server):
 
 
 def test_accepts_new_sdk_connection_after_disconnect(tcp_server, monkeypatch):
-    monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"FIRST={tcp_server.endpoint};SECOND={tcp_server.endpoint}")
-    with Lansing("FIRST", timeout=0.5) as first:
+    with Lansing(tcp_server.endpoint, timeout=0.5) as first:
         assert first.version()["FW"] == "Lansing"
 
-    with Lansing("SECOND", timeout=0.5) as second:
+    with Lansing(tcp_server.endpoint, timeout=0.5) as second:
         assert second.current() == 0.0
         assert second.transport.redirected is True
 
@@ -163,8 +160,7 @@ def test_status_voltage_uses_configured_noise(monkeypatch):
         actuators=config.actuators,
     )
     with LansingTcpServer(config, port=0) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             samples = [board.status()["voltage"] for _ in range(4)]
 
@@ -183,8 +179,7 @@ def test_current_is_base_plus_activation_fraction_times_actuator_current(monkeyp
         actuators={0: _actuator(current_ma=4.0)},
     )
     with LansingTcpServer(config, port=0) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
             board.raw_command("ACT", 0, 128)
@@ -227,8 +222,7 @@ def test_actuator_current_improves_while_running_and_recovers_while_offline():
 def test_diagnosis_has_firmware_like_blocking_latency(monkeypatch):
     delay_s = 0.06
     with LansingTcpServer(_config(), port=0, diagnosis_delay_s=delay_s) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
             started = time.monotonic()
@@ -242,8 +236,7 @@ def test_diagnosis_has_firmware_like_blocking_latency(monkeypatch):
 def test_every_text_command_and_binary_packet_is_logged(monkeypatch):
     messages: list[str] = []
     with LansingTcpServer(_config(), port=0, log=messages.append) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
             board.raw_command("ACT", 2, 100)
@@ -266,8 +259,7 @@ def test_every_text_command_and_binary_packet_is_logged(monkeypatch):
 def test_manual_output_command_is_logged(monkeypatch):
     messages: list[str] = []
     with LansingTcpServer(_config(), port=0, log=messages.append) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.safety(False)
             board.set_manual_output(4, 80, 20)
 
@@ -286,8 +278,7 @@ def test_manual_output_contributes_to_current(monkeypatch):
         actuators={0: _actuator(current_ma=4.0)},
     )
     with LansingTcpServer(config, port=0) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
             board.safety(False)
@@ -310,8 +301,7 @@ def test_cur_logs_evolving_current_for_connected_actuators_only(monkeypatch):
         actuators={0: _actuator(current_ma=4.0), 7: _actuator(current_ma=2.5)},
     )
     with LansingTcpServer(config, port=0, log=messages.append) as server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.current()
 
@@ -391,8 +381,7 @@ def test_simulation_state_persists_across_server_restart(tmp_path, monkeypatch):
         actuators={0: _actuator(current_ma=4.0)},
     )
     with LansingTcpServer(config, port=0, state_path=state_path) as first_server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={first_server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(first_server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
             board.raw_command("ACT", 0, 128)
@@ -404,8 +393,7 @@ def test_simulation_state_persists_across_server_restart(tmp_path, monkeypatch):
     assert saved["actuator_current_ma"]["0"] == pytest.approx(4.0)
 
     with LansingTcpServer(config, port=0, state_path=state_path) as second_server:
-        monkeypatch.setenv("FLUID_REALITY_VIRTUAL_PORTS", f"IGNORED={second_server.endpoint}")
-        with Lansing("IGNORED", timeout=0.5) as board:
+        with Lansing(second_server.endpoint, timeout=0.5) as board:
             status = board.status()
 
     assert status["psu"] == "ON"

@@ -41,7 +41,7 @@ from .connection import (
     open_board_from_connection_file,
 )
 from .listener import TcpDeviceConnection, TcpDeviceListener
-from .transport import is_virtual_port, list_ports
+from .transport import list_ports
 
 __all__ = [
     "ActuatorDetection",
@@ -74,7 +74,6 @@ __all__ = [
     "discover_bluetooth_boards",
     "discover_bluetooth_boards_async",
     "is_bluetooth_endpoint",
-    "is_virtual_port",
     "list_ports",
     "load_connection_file",
     "open_board_from_connection_file",

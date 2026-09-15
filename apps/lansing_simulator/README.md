@@ -74,41 +74,16 @@ python apps/lansing_simulator/simulator.py apps/lansing_simulator/sample_configs
 
 To run the Rockford profile directly, add `--board rockford`.
 
-Before launching an SDK application, map a selectable port alias to the TCP
-endpoint in the same environment. The application still calls `Lansing(port)`
-normally, and only the mapped alias is redirected.
+Connect by passing the simulator endpoint directly to the appropriate board
+class:
 
-PowerShell:
+```python
+from fluid_reality import Lansing
 
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-python existing_application.py
+with Lansing("tcp://127.0.0.1:49765") as board:
+    print(board.status())
 ```
 
-Command Prompt:
-
-```bat
-set FLUID_REALITY_VIRTUAL_PORTS=COM66=tcp://127.0.0.1:49765
-python existing_application.py
-```
-
-macOS/Linux:
-
-```bash
-export FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-python existing_application.py
-```
-
-Multiple aliases can be separated with semicolons:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765;COM67=tcp://127.0.0.1:8766"
-```
-
-Keep the value quoted in macOS/Linux shells because an unquoted semicolon
-separates shell commands. Alias names are arbitrary, so `lansing-sim` may be
-used instead of a COM-style name. Selecting any unmapped port uses normal
-physical serial operation.
 TCP is deliberately bound to `127.0.0.1` in these examples. The raw connection
 is not encrypted or authenticated and should not be exposed to an untrusted
 network. The simulator initially accepts one controlling SDK client. When that
@@ -131,9 +106,8 @@ simulator models that protocol surface; physical 100 V/s forced-discharge
 timing remains firmware behavior.
 
 The simulator requires `fluid-reality>=0.2.4` for the complete Rockford
-configuration snapshot, VT-budget support, virtual-port aliases, and the raw
-TCP listener API. No virtual COM port, PTY, kernel driver, or administrator
-access is required.
+configuration snapshot, VT-budget support, and the raw TCP listener API. No
+virtual COM port, PTY, kernel driver, or administrator access is required.
 
 When a board JSON is used, runtime state is checkpointed into its
 `simulation_state` section. PSU state, PSC state, actuator activation, manual

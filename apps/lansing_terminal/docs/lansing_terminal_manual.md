@@ -7,7 +7,7 @@ automated setup benches.
 
 The terminal can:
 
-- discover physical and virtual ports and connect to a Lansing or Rockford controller;
+- discover physical serial ports and connect to a Lansing or Rockford controller;
 - inspect capabilities and configure Rockford networking and Bluetooth;
 - install firmware and perform a guarded USB-only Rockford factory reset;
 - control the high-voltage power supply and its connection to the actuator path;
@@ -480,21 +480,20 @@ or:
 ports
 ```
 
-Lists physical serial ports and port aliases configured through
-`FLUID_REALITY_VIRTUAL_PORTS`, such as
-`COM66=tcp://127.0.0.1:49765`. A board connection is not required.
+Lists physical serial ports. A board connection is not required. Direct TCP,
+TLS, and Bluetooth endpoints can be supplied to `connect` without appearing in
+this list.
 
 Text example:
 
 ```text
 COM6                           serial port
-COM66                          virtual TCP port
 ```
 
 JSON example:
 
 ```json
-{"event":"serial_port","port":"COM66","description":"virtual TCP port"}
+{"event":"serial_port","port":"COM6","description":"serial port"}
 ```
 
 One object is emitted per port. If no ports are found:

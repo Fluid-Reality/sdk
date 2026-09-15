@@ -13,9 +13,9 @@ JSON schemas, automation behavior, exit codes, and troubleshooting, see the
 
 ## Features
 
-- Connect over USB serial, direct TCP/TLS endpoints, configured virtual-port
-  aliases, or a `ble://` Bluetooth device identifier.
-- List physical serial ports and configured virtual-port aliases.
+- Connect over USB serial, direct TCP/TLS endpoints, or a `ble://` Bluetooth
+  device identifier.
+- List physical serial ports.
 - Control the high-voltage power supply and PSU connection independently.
 - Read voltage, current, configuration, status, and runtime counters.
 - Detect individual actuators or eight-actuator groups.
@@ -100,16 +100,7 @@ Connect during startup:
 python lansing_terminal.py --port COM6
 ```
 
-To expose a TCP simulator as a selectable port alias, set
-`FLUID_REALITY_VIRTUAL_PORTS` before starting the terminal:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-python lansing_terminal.py -c "ports"
-```
-
-Selecting `COM66` connects to TCP; other COM ports remain physical. Multiple
-aliases may be separated by semicolons. A TCP endpoint can also be passed directly:
+Pass a TCP simulator endpoint directly:
 
 ```powershell
 python lansing_terminal.py --port tcp://127.0.0.1:49765

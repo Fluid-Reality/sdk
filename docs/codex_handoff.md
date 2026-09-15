@@ -631,8 +631,7 @@ Main files:
 - `src/fluid_reality/boards/lansing.py`: Lansing wrapper
 - `src/fluid_reality/boards/lansing_errors.py`: Lansing firmware error catalog
 - `src/fluid_reality/protocol.py`: shared OK/ER/DBG protocol parser
-- `src/fluid_reality/transport.py`: physical serial transport and
-  `FLUID_REALITY_VIRTUAL_PORTS` alias routing
+- `src/fluid_reality/transport.py`: physical serial and direct TCP/TLS transport
 - `src/fluid_reality/listener.py`: reusable raw-byte `TcpDeviceListener` and
   `TcpDeviceConnection` APIs for simulated devices
 - `src/fluid_reality/errors.py`: SDK exceptions
@@ -641,10 +640,8 @@ Main files:
 
 The SDK is structured so other board wrappers can be added later under `src/fluid_reality/boards`.
 
-Virtual-port mappings use semicolon-separated entries such as
-`COM66=tcp://127.0.0.1:49765`. Only the selected alias is redirected; unmapped
-ports remain physical. Device simulators should use `TcpDeviceListener` and
-keep ASCII/binary framing in their own protocol engines.
+Device simulators should use `TcpDeviceListener`, expose a direct `tcp://`
+endpoint, and keep ASCII/binary framing in their own protocol engines.
 
 ## SDK Lansing Wrapper
 

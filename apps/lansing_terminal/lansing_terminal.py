@@ -27,7 +27,6 @@ from fluid_reality import (
     Lansing,
     Rockford,
     WifiBoard,
-    is_virtual_port,
     list_ports,
 )
 
@@ -352,19 +351,18 @@ class LansingTerminal(cmd.Cmd):
         self._emit("", event="help", commands=commands)
 
     def do_ports(self, arg: str) -> None:
-        """List available physical serial ports and configured virtual aliases."""
+        """List available physical serial ports."""
 
         ports = list_ports()
         if not ports:
             self._emit("No board endpoints found.", event="serial_ports", ports=[])
             return
         for port in ports:
-            description = "virtual TCP port" if is_virtual_port(port) else "serial port"
             self._emit(
-                f"{port}\t{description}",
+                f"{port}\tserial port",
                 event="serial_port",
                 port=port,
-                description=description,
+                description="serial port",
             )
 
     def do_connect(self, arg: str) -> None:
@@ -518,7 +516,7 @@ class LansingTerminal(cmd.Cmd):
         if not isinstance(board, Rockford):
             raise RuntimeError("Factory reset is not supported by this board profile.")
         port = self.connected_port or ""
-        if is_virtual_port(port):
+        if port.lower().startswith(("tcp://", "tls://", "ble://")):
             raise RuntimeError("Factory reset is available only over direct USB serial.")
         with self._lock:
             board.factory_reset()

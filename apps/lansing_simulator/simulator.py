@@ -1,8 +1,8 @@
 """Raw-TCP Fluid Reality firmware simulator.
 
 The simulator intentionally talks through the same byte stream as the hardware.
-Applications continue calling ``Lansing(port)`` and select a virtual-port alias
-configured through ``FLUID_REALITY_VIRTUAL_PORTS``.
+Applications connect by passing its direct ``tcp://`` endpoint to ``Lansing`` or
+``Rockford``.
 """
 
 from __future__ import annotations
@@ -998,10 +998,7 @@ class LansingTcpServer:
 
 def print_connection_instructions(endpoint: str) -> None:
     print(f"Listening TCP endpoint: {endpoint}")
-    mapping = f"COM66={endpoint}"
-    print(f'PowerShell: $env:FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
-    print(f"Command Prompt: set FLUID_REALITY_VIRTUAL_PORTS={mapping}")
-    print(f'macOS/Linux: export FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
+    print(f'Python: Lansing("{endpoint}")')
     print("WARNING: This raw TCP protocol is not authenticated or encrypted.")
 
 

@@ -38,7 +38,7 @@ This document focuses on the Lansing Development Kit API provided by
 - [Manual Output And Advanced Bench Control](#manual-output-and-advanced-bench-control)
 - [Streaming](#streaming)
 - [Low-Level Protocol Utilities](#low-level-protocol-utilities)
-- [Virtual Ports And Device Listeners](#virtual-ports-and-device-listeners)
+- [Device Listeners](#device-listeners)
 - [Response Objects](#response-objects)
 - [Errors](#errors)
 - [Recommended Customer Workflows](#recommended-customer-workflows)
@@ -63,7 +63,7 @@ print(Lansing.actuator_count)
 
 ## Finding A Board Endpoint
 
-Use the SDK to list physical serial ports and configured virtual-port aliases:
+Use the SDK to list physical serial ports:
 
 ```python
 from fluid_reality import list_ports
@@ -86,20 +86,8 @@ Typical examples:
 - macOS: `/dev/cu.usbmodem...`
 - Linux: `/dev/ttyACM...` or `/dev/ttyUSB...`
 
-To expose a raw TCP device simulator under a selectable alias:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-```
-
-On macOS/Linux:
-
-```bash
-export FLUID_REALITY_VIRTUAL_PORTS="lansing-sim=tcp://127.0.0.1:49765"
-```
-
-Multiple mappings are separated by semicolons. Only the selected mapped alias
-uses TCP; every unmapped serial port remains physical.
+For a raw TCP device simulator or network-connected board, pass its endpoint
+directly, for example `Lansing("tcp://127.0.0.1:49765")`.
 
 For an encrypted Rockford connection, use a `tls://` endpoint. Verify the server
 with either its CA/certificate file or the SHA-256 fingerprint shown by the
@@ -222,7 +210,6 @@ from fluid_reality import (
     TransportError,
     EthernetBoard,
     WifiBoard,
-    is_virtual_port,
     list_ports,
 )
 ```
@@ -316,8 +303,8 @@ Create a Lansing board wrapper.
 
 Pass either:
 
-- `port`: physical serial-port name, configured virtual-port alias, or direct
-  `tcp://host:port` endpoint, or
+- `port`: physical serial-port name or direct `tcp://host:port` or
+  `tls://host:port` endpoint, or
 - `transport`: custom transport object for tests or advanced integrations.
 
 Use a context manager whenever possible so the serial connection closes
@@ -1412,33 +1399,17 @@ board.reboot()
 
 After rebooting, close and reopen the `Lansing` object before continuing.
 
-## Virtual Ports And Device Listeners
+## Device Listeners
 
 ### `list_ports() -> list[str]`
 
-Return physical serial-port names followed by aliases configured through
-`FLUID_REALITY_VIRTUAL_PORTS`. Duplicate names are omitted case-insensitively.
+Return physical serial-port names reported by the operating system.
 
 ```python
 from fluid_reality import list_ports
 
-print(list_ports())  # Example: ["COM4", "COM66"]
+print(list_ports())  # Example: ["COM4", "COM16"]
 ```
-
-The environment variable contains semicolon-separated `alias=endpoint`
-mappings:
-
-```text
-COM66=tcp://127.0.0.1:49765;COM67=tcp://127.0.0.1:8766
-```
-
-Calling `Lansing("COM66")` opens the mapped TCP byte stream. Calling
-`Lansing("COM4")` still opens physical `COM4` through PySerial.
-
-### `is_virtual_port(port) -> bool`
-
-Return `True` for a configured alias or direct `tcp://` endpoint. This is useful
-when a port picker needs to distinguish physical and simulated devices.
 
 ### `TcpDeviceListener(host="127.0.0.1", port=49765, *, backlog=1)`
 

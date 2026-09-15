@@ -42,10 +42,8 @@ local date/time suffix such as
 `device_bridge.20260907-153012-123456.json`; the new configuration is then
 written atomically.
 
-The bridge prints the exact `FLUID_REALITY_VIRTUAL_PORTS` command to use before
-starting the dashboard, terminal, tests, or another SDK application. Existing
-calls such as `Lansing("COM66")` or `Rockford("COM66")` require no code changes;
-the client must still choose the correct hardware profile.
+The bridge prints its direct `tcp://` or `tls://` SDK endpoint. Pass that endpoint
+to `Lansing(...)` or `Rockford(...)`, or enter its host and port in the dashboard.
 
 Useful examples:
 
@@ -53,8 +51,8 @@ Useful examples:
 # Save a full trace without printing every packet
 python apps\device_bridge\device_bridge.py COM9 --log trace.log
 
-# Append hex-only terminal and file traces, using a different alias and baud rate
-python apps\device_bridge\device_bridge.py COM9 --baud 115200 --alias LAB_BOARD --trace hex --log trace.log --append
+# Append hex-only terminal and file traces using a different baud rate
+python apps\device_bridge\device_bridge.py COM9 --baud 115200 --trace hex --log trace.log --append
 
 # Expose the board to another computer on a trusted LAN
 python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:49765 --trace both
@@ -72,11 +70,10 @@ python apps\device_bridge\device_bridge.py COM9 --tcp 0.0.0.0:49765 `
   --tls-key bridge-key.pem
 ```
 
-For remote use, set the client computer's mapping to the bridge computer's reachable
-address, for example:
+For remote use, pass the bridge computer's reachable address directly, for example:
 
-```text
-FLUID_REALITY_VIRTUAL_PORTS=REMOTE_BOARD=tls://192.168.1.50:49765
+```python
+board = Rockford("tls://192.168.1.50:49765", network_token="bridge-secret")
 ```
 
 Only one SDK client controls the serial device at a time. After disconnection, the

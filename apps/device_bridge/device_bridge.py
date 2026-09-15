@@ -72,7 +72,6 @@ def parser() -> argparse.ArgumentParser:
         help="Password for an encrypted TLS private key",
     )
     result.add_argument("--baud", type=int, default=250000)
-    result.add_argument("--alias", default="COM66", help="SDK virtual-port name shown in setup hints")
     result.add_argument("--list-ports", action="store_true", help="List physical serial ports and exit")
     result.add_argument("--trace", choices=("hex", "ascii", "both"), help="Print TX/RX data to the terminal")
     result.add_argument("--log", type=Path, metavar="FILE", help="Write a complete TX/RX trace to a file")
@@ -161,10 +160,7 @@ def run(arguments: argparse.Namespace) -> int:
     )
     try:
         bridge.start()
-        mapping = f"{arguments.alias}={bridge.endpoint}"
-        print(f'PowerShell:     $env:FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
-        print(f"Command Prompt: set FLUID_REALITY_VIRTUAL_PORTS={mapping}")
-        print(f'macOS/Linux:    export FLUID_REALITY_VIRTUAL_PORTS="{mapping}"')
+        print(f"SDK endpoint: {bridge.endpoint}")
         if bridge.network_token:
             print("Authentication: required (use the --token value in the client)")
         if bridge.tls_certfile:

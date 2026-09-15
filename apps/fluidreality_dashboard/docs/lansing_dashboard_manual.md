@@ -47,13 +47,8 @@ Authentication errors are translated into actionable messages. A TCP timeout
 means the selected host and port did not accept a connection; verify the
 board's Wi-Fi address, subnet, TCP-server setting, and local network route.
 
-Virtual simulator aliases can be added before launch:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-```
-
-Multiple aliases are separated by semicolons.
+For a simulator, select the Network connection type and enter the simulator's
+direct TCP host and port.
 
 ## Main Window
 

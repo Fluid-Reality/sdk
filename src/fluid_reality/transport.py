@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import socket
 import ssl
 import time
@@ -11,9 +10,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .errors import TransportError
-
-VIRTUAL_PORTS_ENV = "FLUID_REALITY_VIRTUAL_PORTS"
-
 
 def _parse_tcp_endpoint(endpoint: str, *, context: str) -> None:
     try:
@@ -29,50 +25,15 @@ def _parse_tcp_endpoint(endpoint: str, *, context: str) -> None:
         )
 
 
-def _endpoint_aliases() -> dict[str, tuple[str, str]]:
-    """Return case-insensitive port aliases as alias -> (display name, endpoint)."""
-    value = os.environ.get(VIRTUAL_PORTS_ENV, "").strip()
-    aliases: dict[str, tuple[str, str]] = {}
-    if not value:
-        return aliases
-    for entry in value.split(";"):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if "=" not in entry:
-            raise TransportError(
-                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port or PORT=tls://host:port"
-            )
-        alias, endpoint = (part.strip() for part in entry.split("=", 1))
-        if not alias or not endpoint:
-            raise TransportError(
-                f"Invalid {VIRTUAL_PORTS_ENV} entry {entry!r}; expected PORT=tcp://host:port or PORT=tls://host:port"
-            )
-        _parse_tcp_endpoint(endpoint, context=f"endpoint for alias {alias!r}")
-        aliases[alias.casefold()] = (alias, endpoint)
-    return aliases
-
-
-def is_virtual_port(port: str) -> bool:
-    """Return whether ``port`` is a direct TCP/TLS endpoint or configured alias."""
-    return port.lower().startswith(("tcp://", "tls://", "ble://")) or port.casefold() in _endpoint_aliases()
-
-
 def list_ports() -> list[str]:
-    """Return OS serial ports plus configured TCP endpoint aliases."""
+    """Return physical serial ports reported by the operating system."""
 
     try:
         from serial.tools import list_ports as serial_list_ports
     except ImportError as exc:  # pragma: no cover - dependency metadata covers this.
         raise TransportError("pyserial is required to list serial ports") from exc
 
-    ports = [item.device for item in serial_list_ports.comports()]
-    existing = {port.casefold() for port in ports}
-    for key, (alias, _endpoint) in _endpoint_aliases().items():
-        if key not in existing:
-            ports.append(alias)
-            existing.add(key)
-    return ports
+    return [item.device for item in serial_list_ports.comports()]
 
 
 class _SocketBackend:
@@ -205,12 +166,7 @@ class _SocketBackend:
 
 
 class SerialTransport:
-    """Line-oriented serial transport with selective virtual-port routing.
-
-    ``FLUID_REALITY_VIRTUAL_PORTS`` maps selected port aliases to TCP or TLS endpoints,
-    for example ``COM66=tls://rockford.local:49765``. Only an exact alias selection is
-    redirected; every other port continues through the physical serial layer.
-    """
+    """Line-oriented transport for serial, TCP, and TLS endpoints."""
 
     def __init__(
         self,
@@ -229,11 +185,7 @@ class SerialTransport:
         tls_verify_certificate: bool = True,
         **serial_kwargs: Any,
     ) -> None:
-        aliases = _endpoint_aliases()
-        selected_endpoint = (
-            port if port.lower().startswith(("tcp://", "tls://"))
-            else aliases.get(port.casefold(), ("", None))[1]
-        )
+        selected_endpoint = port if port.lower().startswith(("tcp://", "tls://")) else None
         self.port = port
         self.endpoint = selected_endpoint or port
         self.redirected = selected_endpoint is not None
