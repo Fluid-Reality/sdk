@@ -5,6 +5,11 @@ Python SDK for Fluid Reality Lansing, Rockford, and compatible future hardware.
 The package name on PyPI is `fluid-reality`; the Python import package is
 `fluid_reality`.
 
+Hardware setup guides:
+
+- [Rockford Development Kit Start Here](docs/rockford_kit_start_here/README.md)
+- [Lansing Development Kit Start Here](docs/lansing_kit_start_here/README.md)
+
 ## Install
 
 Use Python 3.10 or newer.
@@ -14,49 +19,18 @@ python -m pip install --upgrade pip
 python -m pip install fluid-reality
 ```
 
-For Bluetooth connectivity, install the optional Bleak dependency:
-
-```bash
-python -m pip install "fluid-reality[bluetooth]"
-```
-
-### Bluetooth
-
-Rockford uses the same command protocol over USB, TCP/TLS, and Bluetooth LE:
-
-```python
-from fluid_reality import Rockford, discover_bluetooth_boards
-
-devices = discover_bluetooth_boards(timeout=5)
-with Rockford(devices[0].endpoint, network_token="optional-token") as board:
-    print(board.firmware_version())
-    print(board.status())
-```
-
-Bluetooth connection files are also supported:
-
-```yaml
-format: fluid-reality-connection
-version: 1
-transport: bluetooth
-device: Rockford-3D3731
-pair: true
-access_token: optional-token
-```
-
-Open one with `Rockford.from_connection_file("rockford-bluetooth.yaml")`.
-
 ## Find the Serial Port
 
-Connect the Lansing board over USB, then list the serial devices visible to
-Python:
+Connect the controller to the computer over USB, then list the serial devices
+visible to Python:
 
 ```bash
 python -m serial.tools.list_ports
 ```
 
-Use the device name shown by that command when creating `Lansing(...)`.
-The exact name depends on the operating system:
+Use the device name shown by that command when creating `Rockford(...)` or
+`Lansing(...)`. Rockford is the default profile in the included examples. The
+exact device name depends on the operating system:
 
 - Windows usually reports names such as `COM4` or `COM16`.
 - macOS usually reports names under `/dev/cu.*`, for example a USB modem port.
@@ -66,129 +40,20 @@ The exact name depends on the operating system:
 If more than one device is listed, unplug the board, run the command again,
 then plug it back in and look for the new entry.
 
-### Simulator port aliases
-
-Existing applications can expose a Lansing TCP simulator under a selectable
-port name without code changes. Set `FLUID_REALITY_VIRTUAL_PORTS` before starting
-the application:
-
-```powershell
-$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
-```
-
-Only `Lansing("COM66")` uses the mapped TCP endpoint. Selecting another COM
-port opens that physical serial port normally. Separate multiple mappings with
-semicolons. See
-[apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
-simulator command and platform-specific examples.
-
-List physical serial ports together with configured aliases:
-
-```python
-from fluid_reality import list_ports
-
-print(list_ports())
-# Example: ["COM1", "COM2", "COM66"]
-```
-
-Every returned value can be passed directly to `Lansing(...)`.
-
-Rockford firmware 1.1 can also expose the physical board directly over Wi-Fi.
-Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
-
-```python
-from fluid_reality import Rockford
-
-board = Rockford("tcp://192.168.1.64:49765", network_token="your-device-token")
-print(board.network_status())
-```
-
-Connections can also be stored in a validated YAML profile and opened directly:
-
-```python
-from fluid_reality import Rockford
-
-board = Rockford.from_connection_file("rockford.connection.yaml")
-```
-
-The profile supports serial, Bluetooth LE, TCP, and TLS transports. A TLS
-profile can embed the public server certificate so it remains portable, or
-reference a certificate file relative to the YAML file. Bluetooth profiles can
-request operating-system pairing. Profiles may contain an access token and
-should therefore be stored and shared as private configuration. Private keys
-are never part of a client connection profile.
-
-`NetworkBoard` marks any board that can be reached over TCP/TLS, including a
-board piggybacking a host whose network is not device-configurable.
-`ConfigurableNetworkBoard` adds interface-neutral IP, TCP server,
-authentication, diagnostics, and TLS provisioning. `WifiBoard` adds Wi-Fi
-discovery and credentials, while `EthernetBoard` adds wired-link control. A
-connection-only, Wi-Fi-only, Ethernet-only, or dual-interface board can
-therefore expose exactly the features its hardware supports. Capability classes
-are designed for cooperative multiple inheritance:
-
-```python
-from fluid_reality import BluetoothBoard, EthernetBoard, WifiBoard
-
-class FutureBoard(WifiBoard, EthernetBoard, BluetoothBoard):
-    actuator_count = 16
-```
-
-For an externally managed network, inherit only from `NetworkBoard`; SDK and
-dashboard TCP/TLS connections remain available, but Network Setup does not send
-device-side `NET` commands.
-
-New capability classes should inherit from `Board`, avoid duplicating board
-state, and use `super()` in any constructor they add. This keeps the shared
-`Board` base present only once in the method-resolution order.
-
-To inspect exact TX/RX traffic or expose a physical board to another computer, run
-the terminal-only [Device Bridge](apps/device_bridge/README.md). It maps
-an SDK virtual alias to a physical serial port and can print or save binary-safe
-hexadecimal and ASCII traces. Its client endpoint can use raw TCP or TLS and can
-require the SDK's network-token authentication handshake. Its SDK-facing
-`DeviceBridgeBoard` inherits from `ConfigurableNetworkBoard`. It handles all
-`NET` commands inside the bridge, exposes its host TCP/TLS listener as the
-configurable interface, and never forwards `NET` traffic to the serial board.
-Its configuration is persisted with timestamped backups.
-
-### Developing simulated-device listeners
-
-The SDK exposes a raw byte-stream listener for device simulators. It performs
-no text decoding or message framing, so protocols can switch freely between
-line commands and binary streaming:
-
-```python
-from fluid_reality import TcpDeviceListener
-
-with TcpDeviceListener("127.0.0.1", 49765) as listener:
-    while True:
-        with listener.accept() as connection:
-            while chunk := connection.read_bytes(4096):
-                response = protocol.feed(chunk)
-                if response:
-                    connection.write_bytes(response)
-```
-
-`write_bytes()` uses `sendall()` semantics. Applications should keep protocol
-buffering, command terminators, binary packet boundaries, and mode transitions
-inside their protocol engine.
-
 ## Touch Validation Example
 
 The maintained
 [basic actuator example](examples/01_basic_actuator_current.py) connects to a
-board, enables power, detects an actuator, runs a bounded pulse, measures
-current, and shuts output and power down even if an error occurs.
+board, enables power, waits for a valid supply-voltage reading, detects an
+actuator, runs a bounded pulse, measures current, and shuts output and power
+down even if an error occurs.
 
 ```powershell
 python examples\01_basic_actuator_current.py COM18 --actuator 0
 python examples\01_basic_actuator_current.py COM5 --board lansing --actuator 0
 ```
 
-The same example accepts `tcp://`, `tls://`, and `ble://` endpoints, access
-tokens, TLS trust settings, or a YAML connection profile. Run it with `--help`
-for all connection and pulse options.
+Run the example with `--help` to see all connection and pulse options.
 
 ## Core Concepts
 
@@ -196,13 +61,23 @@ for all connection and pulse options.
 endpoint can be USB serial, TCP, TLS, or Bluetooth. Use boards as context
 managers so the transport closes cleanly.
 
-The power supply and PSU connection to the actuator path are separate:
+Rockford supports eight actuator channels, numbered `0` through `7`. The
+standard Rockford controller has five built-in actuator ports for channels `0`
+through `4`. The optional three-actuator expansion card connects to `EXT CONN`
+and adds physical ports for channels `5` through `7`.
+
+The SDK exposes the high-voltage supply and its connection to the actuator path
+as separate controls:
 
 - `board.power_supply(True)` turns on the high-voltage supply.
 - `board.voltage()` reads the measured supply voltage. A powered Lansing kit is
   typically around 215-220 V.
 - `board.connect_power(True)` turns on the PSU connection to the actuator path.
 - `board.current()` reads the current drawn by the system in milliamps.
+
+Rockford integrates the power supply, controller, and actuator driver in one
+enclosure and has no separate external PSU-connection switch. The Rockford
+firmware maps these SDK controls to its internal output path.
 
 Actuators have SDK states:
 
@@ -255,6 +130,39 @@ damage actuators or board electronics. Factory reset restores 10,000 V·s but
 does not erase that audit marker. See `examples/13_vt_budget.py` for the guarded
 configuration flow.
 
+## Bluetooth
+
+After confirming the controller works over USB serial, Rockford can use the same
+command protocol over Bluetooth Low Energy:
+
+Install the optional Bleak dependency:
+
+```bash
+python -m pip install "fluid-reality[bluetooth]"
+```
+
+```python
+from fluid_reality import Rockford, discover_bluetooth_boards
+
+devices = discover_bluetooth_boards(timeout=5)
+with Rockford(devices[0].endpoint, network_token="optional-token") as board:
+    print(board.firmware_version())
+    print(board.status())
+```
+
+Bluetooth connection files are also supported:
+
+```yaml
+format: fluid-reality-connection
+version: 1
+transport: bluetooth
+device: Rockford-3D3731
+pair: true
+access_token: optional-token
+```
+
+Open one with `Rockford.from_connection_file("rockford-bluetooth.yaml")`.
+
 ## API Reference
 
 For the complete customer development API reference, including all public
@@ -280,6 +188,125 @@ configure any board class that inherits from `NetworkBoard`. It discovers the
 board's network interfaces and shows only the relevant Wi-Fi and/or Ethernet
 controls, with per-interface IPv4 settings, TCP binding, TLS, and access-token
 management.
+
+## Advanced Connections
+
+These topics build on the basic USB serial workflow and are intended for
+simulation, remote connections, saved profiles, and transport development.
+
+### Simulator port aliases
+
+Existing applications can expose a Lansing TCP simulator under a selectable
+port name without code changes. Set `FLUID_REALITY_VIRTUAL_PORTS` before starting
+the application:
+
+```powershell
+$env:FLUID_REALITY_VIRTUAL_PORTS="COM66=tcp://127.0.0.1:49765"
+```
+
+Only `Lansing("COM66")` uses the mapped TCP endpoint. Selecting another COM
+port opens that physical serial port normally. Separate multiple mappings with
+semicolons. See
+[apps/lansing_simulator/README.md](apps/lansing_simulator/README.md) for the
+simulator command and platform-specific examples.
+
+List physical serial ports together with configured aliases:
+
+```python
+from fluid_reality import list_ports
+
+print(list_ports())
+# Example: ["COM1", "COM2", "COM66"]
+```
+
+Every returned value can be passed directly to `Lansing(...)`.
+
+### Wi-Fi and saved connection profiles
+
+Rockford firmware 1.1 can also expose the physical board directly over Wi-Fi.
+Pass its TCP endpoint and the token retrieved locally with `NET KEY`:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford("tcp://192.168.1.64:49765", network_token="your-device-token")
+print(board.network_status())
+```
+
+Connections can also be stored in a validated YAML profile and opened directly:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford.from_connection_file("rockford.connection.yaml")
+```
+
+The profile supports serial, Bluetooth LE, TCP, and TLS transports. A TLS
+profile can embed the public server certificate so it remains portable, or
+reference a certificate file relative to the YAML file. Bluetooth profiles can
+request operating-system pairing. Profiles may contain an access token and
+should therefore be stored and shared as private configuration. Private keys
+are never part of a client connection profile.
+
+### Network capability classes
+
+`NetworkBoard` marks any board that can be reached over TCP/TLS, including a
+board piggybacking a host whose network is not device-configurable.
+`ConfigurableNetworkBoard` adds interface-neutral IP, TCP server,
+authentication, diagnostics, and TLS provisioning. `WifiBoard` adds Wi-Fi
+discovery and credentials, while `EthernetBoard` adds wired-link control. A
+connection-only, Wi-Fi-only, Ethernet-only, or dual-interface board can
+therefore expose exactly the features its hardware supports. Capability classes
+are designed for cooperative multiple inheritance:
+
+```python
+from fluid_reality import BluetoothBoard, EthernetBoard, WifiBoard
+
+class FutureBoard(WifiBoard, EthernetBoard, BluetoothBoard):
+    actuator_count = 16
+```
+
+For an externally managed network, inherit only from `NetworkBoard`; SDK and
+dashboard TCP/TLS connections remain available, but Network Setup does not send
+device-side `NET` commands.
+
+New capability classes should inherit from `Board`, avoid duplicating board
+state, and use `super()` in any constructor they add. This keeps the shared
+`Board` base present only once in the method-resolution order.
+
+### Device bridge
+
+To inspect exact TX/RX traffic or expose a physical board to another computer, run
+the terminal-only [Device Bridge](apps/device_bridge/README.md). It maps
+an SDK virtual alias to a physical serial port and can print or save binary-safe
+hexadecimal and ASCII traces. Its client endpoint can use raw TCP or TLS and can
+require the SDK's network-token authentication handshake. Its SDK-facing
+`DeviceBridgeBoard` inherits from `ConfigurableNetworkBoard`. It handles all
+`NET` commands inside the bridge, exposes its host TCP/TLS listener as the
+configurable interface, and never forwards `NET` traffic to the serial board.
+Its configuration is persisted with timestamped backups.
+
+### Developing simulated-device listeners
+
+The SDK exposes a raw byte-stream listener for device simulators. It performs
+no text decoding or message framing, so protocols can switch freely between
+line commands and binary streaming:
+
+```python
+from fluid_reality import TcpDeviceListener
+
+with TcpDeviceListener("127.0.0.1", 49765) as listener:
+    while True:
+        with listener.accept() as connection:
+            while chunk := connection.read_bytes(4096):
+                response = protocol.feed(chunk)
+                if response:
+                    connection.write_bytes(response)
+```
+
+`write_bytes()` uses `sendall()` semantics. Applications should keep protocol
+buffering, command terminators, binary packet boundaries, and mode transitions
+inside their protocol engine.
 
 ## Terminal
 

@@ -21,7 +21,18 @@ def main() -> None:
     with open_board(args) as board:
         connect_power(board)
         try:
-            print(f"supply voltage: {board.voltage():.2f} V")
+            time.sleep(0.5)
+            voltage_deadline = time.monotonic() + 1.5
+            supply_voltage = board.voltage()
+            while supply_voltage <= 0.0 and time.monotonic() < voltage_deadline:
+                time.sleep(0.1)
+                supply_voltage = board.voltage()
+            if supply_voltage <= 0.0:
+                raise RuntimeError(
+                    "Supply voltage remained at 0 V after power-on; check the "
+                    "power adapter and controller voltage feedback."
+                )
+            print(f"supply voltage: {supply_voltage:.2f} V")
             state = board.detect(args.actuator)
             if state is not ActuatorState.READY:
                 raise RuntimeError(f"Actuator {args.actuator} is {state.value}")
