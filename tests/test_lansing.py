@@ -224,6 +224,60 @@ def test_lansing_reboot_command():
     assert transport.writes == ["RBT"]
 
 
+def test_power_on_enables_supply_then_connects_output():
+    transport = FakeTransport(["OK:PSC>OFF", "OK:PSU>ON", "OK:PSC>ON"])
+    board = Lansing(transport=transport)
+
+    board.power_on()
+
+    assert transport.writes == ["PSC", "PSU ON", "PSC ON"]
+
+
+def test_power_on_disables_supply_when_output_connection_fails():
+    transport = FakeTransport(
+        ["OK:PSC>OFF", "OK:PSU>ON", "ER:PSC_FAILED", "OK:PSU>OFF"]
+    )
+    board = Lansing(transport=transport)
+
+    with pytest.raises(FirmwareError, match="PSC_FAILED"):
+        board.power_on()
+
+    assert transport.writes == ["PSC", "PSU ON", "PSC ON", "PSU OFF"]
+
+
+def test_power_off_disables_supply_when_output_disconnect_fails():
+    transport = FakeTransport(
+        ["OK:PSC>ON", "ER:PSC_FAILED", "OK:PSU>OFF"]
+    )
+    board = Lansing(transport=transport)
+
+    with pytest.raises(FirmwareError, match="PSC_FAILED"):
+        board.power_off()
+
+    assert transport.writes == ["PSC", "PSC OFF", "PSU OFF"]
+
+
+def test_power_off_disables_supply_when_output_capability_query_fails():
+    transport = FakeTransport(["ER:PSC_QUERY_FAILED", "OK:PSU>OFF"])
+    board = Lansing(transport=transport)
+
+    with pytest.raises(FirmwareError, match="PSC_QUERY_FAILED"):
+        board.power_off()
+
+    assert transport.writes == ["PSC", "PSU OFF"]
+
+
+def test_power_helpers_skip_unsupported_output_connection():
+    transport = FakeTransport(["OK:PSU>ON", "OK:PSU>OFF"])
+    board = Lansing(transport=transport)
+    board.power_connection_supported = False
+
+    board.power_on()
+    board.power_off()
+
+    assert transport.writes == ["PSU ON", "PSU OFF"]
+
+
 def test_lansing_force_text_mode_sends_stream_exit_and_flush_newline():
     transport = FakeTransport()
     board = Lansing(transport=transport)

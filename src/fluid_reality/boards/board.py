@@ -313,6 +313,34 @@ class Board(TransportBoard):
     def is_power_connected(self) -> bool:
         return self._state_to_bool(self.connect_power())
 
+    def power_on(self) -> None:
+        """Enable the power supply and connect it to the actuator path."""
+
+        if self.power_connection_supported is None:
+            self.connect_power()
+        power_connection_available = self.power_connection_supported is not False
+        self.power_supply(True)
+        try:
+            if power_connection_available:
+                self.connect_power(True)
+        except Exception:
+            try:
+                self.power_supply(False)
+            except Exception:
+                pass
+            raise
+
+    def power_off(self) -> None:
+        """Disconnect the actuator path and disable the power supply."""
+
+        try:
+            if self.power_connection_supported is None:
+                self.connect_power()
+            if self.power_connection_supported is not False:
+                self.connect_power(False)
+        finally:
+            self.power_supply(False)
+
     def voltage(self, measurement_ms: int | None = None) -> float:
         if measurement_ms is not None and measurement_ms < 1:
             raise ValueError("measurement_ms must be >= 1")

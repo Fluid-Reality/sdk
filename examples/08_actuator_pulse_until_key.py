@@ -14,7 +14,7 @@ import time
 
 from fluid_reality import ActuatorState, Board
 
-from _common import add_connection_arguments, connect_power, open_board, shutdown_power
+from _common import add_connection_arguments, open_board, shutdown_power
 
 
 def key_pressed() -> bool:
@@ -59,7 +59,7 @@ def main() -> None:
 
     with open_board(args) as board:
         board.force_text_mode()
-        connect_power(board)
+        board.power_on()
         try:
             state = board.detect(args.actuator)
             if state is not ActuatorState.READY:

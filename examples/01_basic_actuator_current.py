@@ -7,7 +7,7 @@ import time
 
 from fluid_reality import ActuatorState
 
-from _common import add_connection_arguments, connect_power, open_board, shutdown_power
+from _common import add_connection_arguments, open_board, shutdown_power
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
     args = parser.parse_args()
 
     with open_board(args) as board:
-        connect_power(board)
+        board.power_on()
         try:
             time.sleep(0.5)
             voltage_deadline = time.monotonic() + 1.5

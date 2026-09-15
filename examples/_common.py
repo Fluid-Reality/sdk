@@ -81,17 +81,10 @@ def open_board(args: argparse.Namespace) -> Board:
     return board_type(args.endpoint, **options)
 
 
-def connect_power(board: Board) -> None:
-    """Turn on the supply and connect its output when the board exposes PSC."""
-
-    board.psu_on()
-    board.psc_on()
-
-
 def shutdown_power(board: Board) -> None:
     """Best-effort output and power shutdown for example cleanup paths."""
 
-    for operation in (board.all_actuators_off, board.psc_off, board.psu_off):
+    for operation in (board.all_actuators_off, board.power_off):
         try:
             operation()
         except Exception:

@@ -6,7 +6,7 @@ import argparse
 
 from fluid_reality import ActuatorState, FirmwareError, FluidRealityError
 
-from _common import add_connection_arguments, connect_power, open_board, shutdown_power
+from _common import add_connection_arguments, open_board, shutdown_power
 
 
 def main() -> None:
@@ -18,7 +18,7 @@ def main() -> None:
     try:
         with open_board(args) as board:
             try:
-                connect_power(board)
+                board.power_on()
                 state = board.detect(args.actuator)
                 if state is not ActuatorState.READY:
                     raise RuntimeError(f"Actuator {args.actuator} is {state.value}")

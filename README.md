@@ -213,19 +213,6 @@ standard Rockford controller has five built-in actuator ports for channels `0`
 through `4`. The optional three-actuator expansion card connects to `EXT CONN`
 and adds physical ports for channels `5` through `7`.
 
-The SDK exposes the high-voltage supply and its connection to the actuator path
-as separate controls:
-
-- `board.power_supply(True)` turns on the high-voltage supply.
-- `board.voltage()` reads the measured supply voltage. A powered Lansing kit is
-  typically around 215-220 V.
-- `board.connect_power(True)` turns on the PSU connection to the actuator path.
-- `board.current()` reads the current drawn by the system in milliamps.
-
-Rockford integrates the power supply, controller, and actuator driver in one
-enclosure and has no separate external PSU-connection switch. The Rockford
-firmware maps these SDK controls to its internal output path.
-
 Actuators have SDK states:
 
 - `Unknown`: the default state when the board object is created.

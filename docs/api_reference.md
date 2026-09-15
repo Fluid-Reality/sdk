@@ -496,6 +496,29 @@ they remain `None` with older firmware that does not report them.
 
 ## Power And Telemetry
 
+### `power_on() -> None`
+
+Turns on the power supply and connects it to the actuator path. Use this for
+normal operation instead of enabling the two stages separately. If the output
+connection fails, the SDK turns the power supply back off before reporting the
+error.
+
+```python
+board.power_on()
+```
+
+### `power_off() -> None`
+
+Disconnects the actuator path, then turns off the power supply. The SDK still
+attempts to turn off the supply if disconnecting the output reports an error.
+
+```python
+board.power_off()
+```
+
+The methods below provide independent control for diagnostics and advanced
+workflows.
+
 ### `power_supply(state=None) -> str`
 
 Read or set the high-voltage power-supply state.

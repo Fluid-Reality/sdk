@@ -9,7 +9,6 @@ from fluid_reality import ActuatorState
 
 from _common import (
     add_connection_arguments,
-    connect_power,
     open_board,
     shutdown_power,
 )
@@ -91,7 +90,7 @@ def main() -> None:
                     f"Use --max-active-ms {int(args.duration_s * 1000) + 1000} for this test.",
                     file=sys.stderr,
                 )
-        connect_power(board)
+        board.power_on()
         try:
             state = board.detect(args.actuator)
             if state is not ActuatorState.READY:
