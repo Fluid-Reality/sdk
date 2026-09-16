@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "kind": "lansing-simulator-design",
+  "kind": "fluidreality-simulator-design",
   "name": "Single Actuator Standard Lansing Board",
   "psu_voltage_v": 215.0,
   "psu_voltage_noise_v": 1.25,
@@ -25,5 +25,6 @@
       "min_running_current_ma": 0.5,
       "current_noise_ma": 0.01
     }
-  ]
+  ],
+  "board_type": "lansing"
 }

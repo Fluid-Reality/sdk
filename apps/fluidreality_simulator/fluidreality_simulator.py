@@ -1,4 +1,4 @@
-"""Visual configuration designer and launcher for the Rockford simulator."""
+"""Visual configuration designer and launcher for Fluid Reality simulators."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ if str(APPS_ROOT) not in sys.path:
 STANDARD_CONFIG_DIR = APP_ROOT / "standard_configs"
 LOGO_PATH = APP_ROOT / "assets" / "fluid_reality_logo_transparent.png"
 APP_ICON_PATH = APP_ROOT / "assets" / "fluid-reality-icon.png"
-GROUP_COUNT = 1
+GROUP_COUNT = 3
 ACTUATORS_PER_GROUP = 8
 
-from rockford_simulator.toggle import LabeledToggle
+from fluidreality_simulator.toggle import LabeledToggle
 
 
 @dataclass
@@ -53,7 +53,7 @@ class GroupConfig:
 @dataclass
 class BoardConfig:
     name: str = ""
-    psu_voltage_v: float = 210.0
+    psu_voltage_v: float = 200.0
     psu_voltage_noise_v: float = 0.25
     psu_base_current_ma: float = 1.0
     psu_base_current_noise_ma: float = 0.02
@@ -124,7 +124,7 @@ class ActuatorCard(QFrame):
 class SimulatorLogWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Rockford Simulator Log")
+        self.setWindowTitle("Fluid Reality Simulator Log")
         self.resize(900, 520)
         root = QWidget()
         self.setCentralWidget(root)
@@ -160,7 +160,7 @@ class DesignerWindow(QMainWindow):
         self.group_buttons: list[QPushButton] = []
         self._loading = False
         self._dirty = False
-        self.settings = QSettings("Fluid Reality", "Rockford Simulator Designer")
+        self.settings = QSettings("Fluid Reality", "Fluid Reality Simulator Designer")
         self.log_window = SimulatorLogWindow(self)
         self.simulator_log = self.log_window.log
         self.simulator_process = QProcess(self)
@@ -235,6 +235,7 @@ class DesignerWindow(QMainWindow):
         self.board_name.setMinimumWidth(240)
         self.board_name.textChanged.connect(self._update_model)
         self.board_profile = QComboBox()
+        self.board_profile.addItem("Lansing (24 actuators)", "lansing")
         self.board_profile.addItem("Rockford (8 actuators)", "rockford")
         self.board_profile.setToolTip("Firmware protocol profile")
         self.board_profile.currentIndexChanged.connect(self._profile_type_changed)
@@ -436,7 +437,7 @@ class DesignerWindow(QMainWindow):
         self.editor_kicker.setText("CONFIGURATION LIBRARY")
         self.editor_title.setText("Actuator configurations")
         self.file_preview.setText(
-            f"GUID: {current.guid}\nSaved inside the Rockford board JSON"
+            f"GUID: {current.guid}\nSaved inside the board JSON"
             if self.profile_key else "No configuration selected"
         )
         for i, card in enumerate(self.cards):
@@ -653,7 +654,7 @@ class DesignerWindow(QMainWindow):
             groups[0].enabled = True
         return BoardConfig(
             name=data.get("name", ""),
-            psu_voltage_v=float(data.get("psu_voltage_v", 210)),
+            psu_voltage_v=float(data.get("psu_voltage_v", 200)),
             psu_voltage_noise_v=float(data.get("psu_voltage_noise_v", 0.25)),
             psu_base_current_ma=float(data.get("psu_base_current_ma", 1)),
             psu_base_current_noise_ma=float(data.get("psu_base_current_noise_ma", 0.02)),
@@ -664,9 +665,9 @@ class DesignerWindow(QMainWindow):
         initial = self.path.parent if self.path else APP_ROOT / "sample_configs"
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Rockford configuration",
+            "Open simulator configuration",
             str(initial),
-            "Rockford configurations (*.json)",
+            "Simulator configurations (*.json)",
         )
         if not filename:
             return
@@ -677,16 +678,25 @@ class DesignerWindow(QMainWindow):
 
     def _load_configuration_path(self, path: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Simulator configuration must contain a JSON object")
         if data.get("schema_version") != 3:
-            raise ValueError("Unsupported Rockford simulator schema; expected schema_version 3")
-        if data.get("kind") != "rockford-simulator-design":
-            raise ValueError("Configuration kind must be 'rockford-simulator-design'")
+            raise ValueError("Unsupported simulator schema; expected schema_version 3")
+        accepted_kinds = {
+            "fluidreality-simulator-design",
+            "lansing-simulator-design",
+            "rockford-simulator-design",
+        }
+        if data.get("kind") not in accepted_kinds:
+            raise ValueError("Configuration kind must be 'fluidreality-simulator-design'")
         self.path = path.resolve()
-        board_type = str(data.get("board_type", "rockford")).lower()
-        if board_type != "rockford":
-            raise ValueError("Rockford simulator configurations must use board_type 'rockford'")
+        board_type = str(data.get("board_type", "lansing")).lower()
         profile_index = self.board_profile.findData(board_type)
-        self.board_profile.setCurrentIndex(max(0, profile_index))
+        if profile_index < 0:
+            raise ValueError("board_type must be 'lansing' or 'rockford'")
+        if board_type == "rockford" and any(str(key) != "0" for key in data.get("groups", {})):
+            raise ValueError("Rockford configurations can only contain actuator group 0")
+        self.board_profile.setCurrentIndex(profile_index)
         self.config = self._from_dict(data, self.path.parent)
         self._load_standard_configs()
         for profile_data in data.get("actuator_configurations", []):
@@ -901,12 +911,12 @@ class DesignerWindow(QMainWindow):
 
     def _save(self) -> bool:
         self._update_model()
-        initial = str(self.path if self.path else Path.cwd() / "rockford-board.json")
+        initial = str(self.path if self.path else Path.cwd() / "fluidreality-board.json")
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Rockford board configuration",
+            "Save simulator configuration",
             initial,
-            "Rockford board (*.json);;JSON (*.json)",
+            "Simulator configuration (*.json);;JSON (*.json)",
         )
         if not filename:
             return False
@@ -925,7 +935,7 @@ class DesignerWindow(QMainWindow):
                     pass
             payload = {
                 "schema_version": 3,
-                "kind": "rockford-simulator-design",
+                "kind": "fluidreality-simulator-design",
                 "board_type": str(self.board_profile.currentData()),
                 "name": self.config.name,
                 "psu_voltage_v": self.config.psu_voltage_v,

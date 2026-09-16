@@ -179,6 +179,12 @@ runs automatically when Power becomes ready and when a different actuator group
 is selected. Use the redetect button after connecting, disconnecting, or moving
 an actuator.
 
+![Actuator detection in progress](docs/images/05a_detection_in_progress.png)
+
+During detection, each visible channel shows `Detecting` and Actuator Tools stay
+disabled. Results appear progressively. Wait until detection finishes before
+selecting an actuator or starting a tool.
+
 Rockford exposes channels `0` through `7`. Its five built-in ports are channels
 `0` through `4`; the optional three-actuator expansion card adds physical ports
 for channels `5` through `7`. Lansing displays its channels in groups of eight.
@@ -270,6 +276,10 @@ otherwise stops after 60 seconds. The target must be greater than zero and below
 
 Diagnose measures actuator current over a voltage sweep and classifies the
 complete response.
+
+Select a `Ready` actuator, then select **Diagnose**.
+
+![Diagnose selected for actuator 0](docs/images/08a_diagnose_selected.png)
 
 ![Diagnose actuator window](docs/images/08_diagnose.png)
 

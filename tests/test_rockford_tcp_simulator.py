@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from apps.rockford_simulator.simulator import (
-    RockfordDeviceSimulator,
-    RockfordTcpServer,
+from apps.fluidreality_simulator.simulator import (
+    FluidRealityDeviceSimulator,
+    FluidRealityTcpServer,
     SimulatedActuator,
     SimulatorConfig,
 )
@@ -21,6 +21,7 @@ def _config() -> SimulatorConfig:
         psu_voltage_noise_v=0.0,
         psu_base_current_ma=0.2,
         psu_base_current_noise_ma=0.0,
+        board_type="rockford",
         actuators={
             0: SimulatedActuator(
                 guid="rockford-test-actuator",
@@ -36,7 +37,7 @@ def _config() -> SimulatorConfig:
 
 
 def test_rockford_profile_exposes_current_protocol(tmp_path) -> None:
-    with RockfordTcpServer(_config(), port=0) as server:
+    with FluidRealityTcpServer(_config(), port=0) as server:
         with Rockford(server.endpoint, timeout=1.0) as board:
             version = board.firmware_version()
             assert version.firmware == "Rockford"
@@ -87,7 +88,7 @@ def test_rockford_profile_exposes_current_protocol(tmp_path) -> None:
 
 
 def test_rockford_profile_keeps_absent_actuator_not_connected() -> None:
-    with RockfordTcpServer(_config(), port=0) as server:
+    with FluidRealityTcpServer(_config(), port=0) as server:
         with Rockford(server.endpoint, timeout=1.0) as board:
             board.power_supply(True)
             board.connect_power(True)
@@ -97,7 +98,7 @@ def test_rockford_profile_keeps_absent_actuator_not_connected() -> None:
 
 def test_included_rockford_configuration_loads() -> None:
     config = SimulatorConfig.load(
-        Path("apps/rockford_simulator/sample_configs/01_single_actuator.json")
+        Path("apps/fluidreality_simulator/sample_configs/02_rockford_single_actuator.json")
     )
 
     assert config.name == "Single Actuator Rockford Board"
@@ -105,13 +106,13 @@ def test_included_rockford_configuration_loads() -> None:
     assert config.psu_voltage_v == 210.0
 
 
-def test_rockford_simulator_rejects_lansing_profile() -> None:
-    with pytest.raises(ValueError, match="board_type must be 'rockford'"):
-        RockfordDeviceSimulator(lambda _data: None, _config(), board_type="lansing")
+def test_simulator_rejects_unknown_profile() -> None:
+    with pytest.raises(ValueError, match="board_type must be 'lansing' or 'rockford'"):
+        FluidRealityDeviceSimulator(lambda _data: None, _config(), board_type="unknown")
 
 
 def test_rockford_configuration_rejects_additional_groups(tmp_path) -> None:
-    source = Path("apps/rockford_simulator/sample_configs/01_single_actuator.json")
+    source = Path("apps/fluidreality_simulator/sample_configs/02_rockford_single_actuator.json")
     data = json.loads(source.read_text(encoding="utf-8"))
     data["groups"]["1"] = {"actuators": {}}
     invalid = tmp_path / "invalid-rockford.json"

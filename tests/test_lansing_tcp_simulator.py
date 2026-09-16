@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from apps.lansing_simulator.simulator import (
-    LansingDeviceSimulator, LansingTcpServer, SimulatedActuator, SimulatorConfig,
+from apps.fluidreality_simulator.simulator import (
+    FluidRealityDeviceSimulator, FluidRealityTcpServer, SimulatedActuator, SimulatorConfig,
 )
 from fluid_reality import Lansing, TransportError
 
@@ -43,11 +43,11 @@ def _actuator(
 
 @pytest.fixture
 def tcp_server():
-    with LansingTcpServer(_config(), port=0) as server:
+    with FluidRealityTcpServer(_config(), port=0) as server:
         yield server
 
 
-def _connect(server: LansingTcpServer, *, timeout: float = 0.5) -> socket.socket:
+def _connect(server: FluidRealityTcpServer, *, timeout: float = 0.5) -> socket.socket:
     connection = socket.create_connection(server.address, timeout=timeout)
     connection.settimeout(timeout)
     return connection
@@ -159,7 +159,7 @@ def test_status_voltage_uses_configured_noise(monkeypatch):
         psu_base_current_noise_ma=config.psu_base_current_noise_ma,
         actuators=config.actuators,
     )
-    with LansingTcpServer(config, port=0) as server:
+    with FluidRealityTcpServer(config, port=0) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             samples = [board.status()["voltage"] for _ in range(4)]
@@ -178,7 +178,7 @@ def test_current_is_base_plus_activation_fraction_times_actuator_current(monkeyp
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator(current_ma=4.0)},
     )
-    with LansingTcpServer(config, port=0) as server:
+    with FluidRealityTcpServer(config, port=0) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
@@ -203,7 +203,7 @@ def test_actuator_current_improves_while_running_and_recovers_while_offline():
         psu_base_current_noise_ma=0.0,
         actuators={0: profile},
     )
-    engine = LansingDeviceSimulator(lambda _data: None, config)
+    engine = FluidRealityDeviceSimulator(lambda _data: None, config)
     engine.psu = True
     engine.psc = True
     engine.values[0] = 255
@@ -221,7 +221,7 @@ def test_actuator_current_improves_while_running_and_recovers_while_offline():
 
 def test_diagnosis_has_firmware_like_blocking_latency(monkeypatch):
     delay_s = 0.06
-    with LansingTcpServer(_config(), port=0, diagnosis_delay_s=delay_s) as server:
+    with FluidRealityTcpServer(_config(), port=0, diagnosis_delay_s=delay_s) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
@@ -235,7 +235,7 @@ def test_diagnosis_has_firmware_like_blocking_latency(monkeypatch):
 
 def test_every_text_command_and_binary_packet_is_logged(monkeypatch):
     messages: list[str] = []
-    with LansingTcpServer(_config(), port=0, log=messages.append) as server:
+    with FluidRealityTcpServer(_config(), port=0, log=messages.append) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
@@ -258,7 +258,7 @@ def test_every_text_command_and_binary_packet_is_logged(monkeypatch):
 
 def test_manual_output_command_is_logged(monkeypatch):
     messages: list[str] = []
-    with LansingTcpServer(_config(), port=0, log=messages.append) as server:
+    with FluidRealityTcpServer(_config(), port=0, log=messages.append) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.safety(False)
             board.set_manual_output(4, 80, 20)
@@ -277,7 +277,7 @@ def test_manual_output_contributes_to_current(monkeypatch):
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator(current_ma=4.0)},
     )
-    with LansingTcpServer(config, port=0) as server:
+    with FluidRealityTcpServer(config, port=0) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
@@ -300,7 +300,7 @@ def test_cur_logs_evolving_current_for_connected_actuators_only(monkeypatch):
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator(current_ma=4.0), 7: _actuator(current_ma=2.5)},
     )
-    with LansingTcpServer(config, port=0, log=messages.append) as server:
+    with FluidRealityTcpServer(config, port=0, log=messages.append) as server:
         with Lansing(server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.current()
@@ -324,7 +324,7 @@ def test_diagnosis_and_initialization_pulses_evolve_actuator_current():
         psu_base_current_noise_ma=0.0,
         actuators={0: profile},
     )
-    engine = LansingDeviceSimulator(lambda _data: None, config, diagnosis_delay_s=0.0)
+    engine = FluidRealityDeviceSimulator(lambda _data: None, config, diagnosis_delay_s=0.0)
     engine.psu = True
     engine.psc = True
 
@@ -344,7 +344,7 @@ def test_reverse_output_draws_discharge_current_and_recovers_actuator(monkeypatc
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator(current_ma=4.0, minimum_ma=0.5, offline_increase=0.25)},
     )
-    engine = LansingDeviceSimulator(lambda _data: None, config)
+    engine = FluidRealityDeviceSimulator(lambda _data: None, config)
     engine.psu = True
     engine.psc = True
     engine._actuator_current_ma[0] = 2.0
@@ -359,7 +359,7 @@ def test_reverse_output_draws_discharge_current_and_recovers_actuator(monkeypatc
 
 def test_each_response_line_is_logged_as_tx():
     messages: list[str] = []
-    with LansingTcpServer(_config(), port=0, log=messages.append) as server:
+    with FluidRealityTcpServer(_config(), port=0, log=messages.append) as server:
         with _connect(server) as connection:
             connection.sendall(b"STS\nBAD\n")
             _receive_lines(connection, 8)
@@ -380,7 +380,7 @@ def test_simulation_state_persists_across_server_restart(tmp_path, monkeypatch):
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator(current_ma=4.0)},
     )
-    with LansingTcpServer(config, port=0, state_path=state_path) as first_server:
+    with FluidRealityTcpServer(config, port=0, state_path=state_path) as first_server:
         with Lansing(first_server.endpoint, timeout=0.5) as board:
             board.psu_on()
             board.psc_on()
@@ -392,7 +392,7 @@ def test_simulation_state_persists_across_server_restart(tmp_path, monkeypatch):
     assert saved["actuator_activation"]["0"]["value"] == 128
     assert saved["actuator_current_ma"]["0"] == pytest.approx(4.0)
 
-    with LansingTcpServer(config, port=0, state_path=state_path) as second_server:
+    with FluidRealityTcpServer(config, port=0, state_path=state_path) as second_server:
         with Lansing(second_server.endpoint, timeout=0.5) as board:
             status = board.status()
 
@@ -419,6 +419,31 @@ def test_config_loader_enforces_schema_and_kind(tmp_path):
         SimulatorConfig.load(path)
 
 
+@pytest.mark.parametrize(
+    "kind,board_type",
+    [
+        ("fluidreality-simulator-design", "lansing"),
+        ("lansing-simulator-design", "lansing"),
+        ("rockford-simulator-design", "rockford"),
+    ],
+)
+def test_config_loader_accepts_unified_and_legacy_kinds(tmp_path, kind, board_type):
+    path = tmp_path / "board.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "kind": kind,
+                "board_type": board_type,
+                "groups": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert SimulatorConfig.load(path).board_type == board_type
+
+
 def test_reboot_clears_all_activation_paths():
     config = SimulatorConfig(
         name="Reboot reset",
@@ -428,7 +453,7 @@ def test_reboot_clears_all_activation_paths():
         psu_base_current_noise_ma=0.0,
         actuators={0: _actuator()},
     )
-    engine = LansingDeviceSimulator(lambda _data: None, config)
+    engine = FluidRealityDeviceSimulator(lambda _data: None, config)
     engine.psu = engine.psc = True
     engine.safe = False
     assert engine._output(["0", "255", "0"]) == "OK:OUT"

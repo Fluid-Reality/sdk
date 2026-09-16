@@ -1,6 +1,6 @@
 # Fluid Reality SDK
 
-Python SDK for Fluid Reality Lansing, Rockford, and compatible future hardware.
+Python SDK for Fluid Reality hardware.
 
 The package name on PyPI is `fluid-reality`; the Python import package is
 `fluid_reality`.
@@ -156,7 +156,7 @@ the PEM certificate in the YAML file. Certificate and hostname verification are
 enabled by default.
 
 For local development, the
-[Rockford Simulator](apps/rockford_simulator/README.md) listens at
+[Fluid Reality Simulator](apps/fluidreality_simulator/README.md) listens at
 `tcp://127.0.0.1:49765`. The [Device Bridge](apps/device_bridge/README.md) can
 expose a serial controller over TCP or TLS and capture TX/RX traffic.
 
@@ -245,24 +245,24 @@ mode when finished. Stream only to actuators that have passed detection. The
 Discharge reverses accumulated drive and returns the actuator toward a neutral
 state. This balancing helps maintain performance and extend actuator life.
 
-Actuator output and discharge are separate phases. Rockford firmware integrates
+Actuator output and discharge are separate phases. The controller firmware integrates
 each actuator's signed voltage-time exposure and maintains a 1:1 forward/reverse
 balance. Its default per-actuator budget is 10,000 V·s, equivalent to 200 V for
 50 seconds.
 
-When Rockford receives a normal off command, it immediately applies full
+When the controller receives a normal off command, it immediately applies full
 reverse until the accumulated VT is cancelled. If an actuator exhausts its VT
 budget while still active, firmware gently ramps from full forward to full
 reverse at 100 V/s, includes the ramp in the VT calculation, then holds full
 reverse until the balance reaches zero. There is no separate continuous
-activation-time limit on Rockford. During discharge, an actuator can still feel
+activation-time limit. During discharge, an actuator can still feel
 active or busy even after it was commanded off; that is expected.
 
 Wait for discharge to finish before starting the next pulse or interpreting the
 actuator as idle. The SDK and firmware use this discharge phase to return the
 actuator safely toward neutral.
 
-Read Rockford's VT settings with `board.read_config()` or
+Read the controller's VT settings with `board.read_config()` or
 `board.vt_limit_vs()`. Setting `board.vt_limit_vs(value)` uses whole V·s and
 permanently marks the board as user-modified. An incorrect limit can permanently
 damage actuators or board electronics. Factory reset restores 10,000 V·s but
@@ -313,7 +313,7 @@ examples, see [docs/api_reference.md](docs/api_reference.md).
 
 ## Dashboard
 
-The Fluid Reality Dashboard configures and operates Lansing and Rockford
+The Fluid Reality Dashboard configures and operates the
 controllers over USB serial, Bluetooth LE, TCP, or TLS. It provides power,
 telemetry, detection, initialization, diagnosis, recovery, and square-wave
 controls.
@@ -323,7 +323,7 @@ for installation and usage instructions.
 
 ## Terminal
 
-The Fluid Reality Terminal connects to Lansing and Rockford controllers,
+The Fluid Reality Terminal connects to the controllers,
 controls power and actuator output, displays telemetry and configuration, and
 runs detection, diagnosis, initialization, recovery, and square-wave tests. It
 supports interactive use, command sequences, and newline-delimited JSON output

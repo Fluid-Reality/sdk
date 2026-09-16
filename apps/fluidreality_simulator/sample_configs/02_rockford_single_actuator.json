@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "kind": "rockford-simulator-design",
+  "kind": "fluidreality-simulator-design",
   "board_type": "rockford",
   "name": "Single Actuator Rockford Board",
   "psu_voltage_v": 210.0,

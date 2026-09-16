@@ -1,4 +1,4 @@
-"""Branded toggle control for the Rockford Simulator."""
+"""Branded toggle control for the Fluid Reality Simulator."""
 
 from __future__ import annotations
 

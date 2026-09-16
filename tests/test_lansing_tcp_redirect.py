@@ -11,8 +11,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from apps.lansing_simulator.simulator import (
-    LansingTcpServer,
+from apps.fluidreality_simulator.simulator import (
+    FluidRealityTcpServer,
     SimulatorConfig,
 )
 from fluid_reality import Lansing, TransportError, list_ports
@@ -32,7 +32,7 @@ def _config() -> SimulatorConfig:
 
 @contextmanager
 def _tcp_simulator(*, response_delay_s: float = 0.0):
-    with LansingTcpServer(
+    with FluidRealityTcpServer(
         _config(),
         port=0,
         response_delay_s=response_delay_s,

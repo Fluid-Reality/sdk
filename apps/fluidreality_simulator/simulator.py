@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 from fluid_reality import TcpDeviceConnection, TcpDeviceListener, TransportError
 
-ACTUATOR_COUNT = 24
+MAX_ACTUATOR_COUNT = 24
 LINE_LIMIT = 256
 TEXT_ENCODING = "ascii"
 COMMAND_TERMINATOR = b"\n"
@@ -50,6 +50,7 @@ class SimulatorConfig:
     psu_base_current_ma: float
     psu_base_current_noise_ma: float
     actuators: dict[int, SimulatedActuator]
+    board_type: str = "lansing"
 
     @classmethod
     def load(
@@ -60,11 +61,19 @@ class SimulatorConfig:
     ) -> "SimulatorConfig":
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError("Lansing board configuration must contain a JSON object")
+            raise ValueError("Simulator configuration must contain a JSON object")
         if data.get("schema_version") != 3:
-            raise ValueError("Unsupported Lansing simulator schema; expected schema_version 3")
-        if data.get("kind") != "lansing-simulator-design":
-            raise ValueError("Configuration kind must be 'lansing-simulator-design'")
+            raise ValueError("Unsupported simulator schema; expected schema_version 3")
+        accepted_kinds = {
+            "fluidreality-simulator-design",
+            "lansing-simulator-design",
+            "rockford-simulator-design",
+        }
+        if data.get("kind") not in accepted_kinds:
+            raise ValueError("Configuration kind must be 'fluidreality-simulator-design'")
+        board_type = str(data.get("board_type", "lansing")).lower()
+        if board_type not in {"lansing", "rockford"}:
+            raise ValueError("board_type must be 'lansing' or 'rockford'")
         def parse_profile(item: dict[str, Any]) -> SimulatedActuator:
             profile = SimulatedActuator(
                 guid=str(item["guid"]),
@@ -95,6 +104,8 @@ class SimulatorConfig:
         if isinstance(groups, dict):
             for group_key, group in groups.items():
                 group_index = int(group_key)
+                if board_type == "rockford" and group_index != 0:
+                    raise ValueError(f"Rockford group key must be 0; received {group_key!r}")
                 if not 0 <= group_index < 3:
                     raise ValueError(f"Group key must be 0, 1, or 2; received {group_key!r}")
                 if not isinstance(group, dict):
@@ -115,11 +126,12 @@ class SimulatorConfig:
             psu_base_current_ma=float(data.get("psu_base_current_ma", 1.0)),
             psu_base_current_noise_ma=float(data.get("psu_base_current_noise_ma", 0.0)),
             actuators=assigned,
+            board_type=board_type,
         )
 
 
-class LansingDeviceSimulator:
-    """Connection-independent state and Lansing byte-protocol engine."""
+class FluidRealityDeviceSimulator:
+    """Connection-independent Lansing or Rockford protocol engine."""
 
     def __init__(
         self,
@@ -130,8 +142,8 @@ class LansingDeviceSimulator:
         diagnosis_delay_s: float = DEFAULT_DIAGNOSIS_DELAY_S,
         random_seed: int | None = 0,
         log: Callable[[str], None] | None = None,
-        state_changed: Callable[["LansingDeviceSimulator"], None] | None = None,
-        board_type: str = "lansing",
+        state_changed: Callable[["FluidRealityDeviceSimulator"], None] | None = None,
+        board_type: str | None = None,
     ) -> None:
         self._write_bytes = write_bytes
         self.config = config
@@ -140,10 +152,10 @@ class LansingDeviceSimulator:
         self._random = random.Random(random_seed)
         self._log = log
         self._state_changed = state_changed
-        self.board_type = board_type.lower()
+        self.board_type = (board_type or config.board_type).lower()
         if self.board_type not in {"lansing", "rockford"}:
             raise ValueError("board_type must be 'lansing' or 'rockford'")
-        self.actuator_count = 8 if self.board_type == "rockford" else ACTUATOR_COUNT
+        self.actuator_count = 8 if self.board_type == "rockford" else MAX_ACTUATOR_COUNT
         self._stream_mode = False
         self._stream_packet = bytearray()
         self._line = bytearray()
@@ -861,7 +873,7 @@ class LansingDeviceSimulator:
         self._write_bytes(payload[midpoint:])
 
 
-class LansingTcpServer:
+class FluidRealityTcpServer:
     """Single-controller TCP server that returns to accept after disconnect."""
 
     def __init__(
@@ -874,7 +886,7 @@ class LansingTcpServer:
         diagnosis_delay_s: float = DEFAULT_DIAGNOSIS_DELAY_S,
         log: Callable[[str], None] | None = None,
         state_path: Path | None = None,
-        board_type: str = "lansing",
+        board_type: str | None = None,
     ) -> None:
         self.config = config
         self.host = host
@@ -883,9 +895,11 @@ class LansingTcpServer:
         self.diagnosis_delay_s = diagnosis_delay_s
         self.log = log
         self.state_path = state_path
-        self.board_type = board_type
+        self.board_type = (board_type or config.board_type).lower()
+        if self.board_type not in {"lansing", "rockford"}:
+            raise ValueError("board_type must be 'lansing' or 'rockford'")
         self._runtime_state = self._load_runtime_state()
-        self.last_engine: LansingDeviceSimulator | None = None
+        self.last_engine: FluidRealityDeviceSimulator | None = None
         self._server: TcpDeviceListener | None = None
         self._connection: TcpDeviceConnection | None = None
         self._stop = threading.Event()
@@ -901,7 +915,7 @@ class LansingTcpServer:
         except (OSError, ValueError, TypeError):
             return {}
 
-    def _checkpoint_engine(self, engine: LansingDeviceSimulator) -> None:
+    def _checkpoint_engine(self, engine: FluidRealityDeviceSimulator) -> None:
         self._runtime_state = engine.snapshot()
         if self.state_path is None:
             return
@@ -926,11 +940,11 @@ class LansingTcpServer:
         host, port = self.address
         return f"tcp://{host}:{port}"
 
-    def start(self) -> "LansingTcpServer":
+    def start(self) -> "FluidRealityTcpServer":
         if self._thread is not None:
             raise RuntimeError("TCP server is already running")
         self._server = TcpDeviceListener(self.host, self.port).start()
-        self._thread = threading.Thread(target=self.serve_forever, name="lansing-tcp-server", daemon=True)
+        self._thread = threading.Thread(target=self.serve_forever, name="fluidreality-tcp-server", daemon=True)
         self._thread.start()
         return self
 
@@ -947,7 +961,7 @@ class LansingTcpServer:
             try:
                 if self.log is not None:
                     self.log(f"CLIENT connected from {connection.address[0]}:{connection.address[1]}")
-                engine = LansingDeviceSimulator(
+                engine = FluidRealityDeviceSimulator(
                     connection.write_bytes,
                     self.config,
                     response_delay_s=self.response_delay_s,
@@ -989,16 +1003,17 @@ class LansingTcpServer:
         self._thread = None
         self._server = None
 
-    def __enter__(self) -> "LansingTcpServer":
+    def __enter__(self) -> "FluidRealityTcpServer":
         return self.start()
 
     def __exit__(self, *_exc: object) -> None:
         self.stop()
 
 
-def print_connection_instructions(endpoint: str) -> None:
+def print_connection_instructions(endpoint: str, board_type: str) -> None:
     print(f"Listening TCP endpoint: {endpoint}")
-    print(f'Python: Lansing("{endpoint}")')
+    board_class = "Rockford" if board_type == "rockford" else "Lansing"
+    print(f'Python: {board_class}("{endpoint}")')
     print("WARNING: This raw TCP protocol is not authenticated or encrypted.")
 
 
@@ -1015,12 +1030,12 @@ def run_tcp_simulator(
         board_type = str(design.get("board_type", "lansing")).lower()
     if board_type not in {"lansing", "rockford"}:
         raise ValueError("Saved board_type must be 'lansing' or 'rockford'")
-    with LansingTcpServer(
+    with FluidRealityTcpServer(
         config, host=host, port=port, log=print, state_path=config_path,
         board_type=board_type,
     ) as server:
         print(f"{board_type.title()} simulator: {config.name}")
-        print_connection_instructions(server.endpoint)
+        print_connection_instructions(server.endpoint, board_type)
         if host not in {"127.0.0.1", "localhost"}:
             print("WARNING: Non-loopback binding exposes the unauthenticated protocol to the network.")
         try:
@@ -1032,7 +1047,7 @@ def run_tcp_simulator(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a Fluid Reality device over its raw TCP byte stream")
-    parser.add_argument("config", type=Path, help="Single-file Lansing board JSON")
+    parser.add_argument("config", type=Path, help="Single-file simulator board JSON")
     parser.add_argument(
         "--board",
         choices=("lansing", "rockford"),
