@@ -124,11 +124,10 @@ the [Fluid Reality Dashboard](../../apps/fluidreality_dashboard/README.md).
 
 ## Rockford Discharge Behavior
 
-Rockford tracks a voltage-time budget for each actuator. When an actuator is
+Rockford tracks a voltage-time budget for each actuator. When an actuator is turned on, the budget starts togo down. as soon as the actuator is
 turned off, the controller applies reverse output until that actuator's
 accumulated voltage-time balance returns to zero. An actuator can therefore
-remain active briefly after an off command. Wait for discharge to finish before
-starting another pulse or treating the actuator as idle.
+remain actively deflated briefly after an off command.  
 
 The default voltage-time budget is `10,000 V·s`. Do not change it during normal
 kit setup. An incorrect value can permanently damage actuators or controller
@@ -141,6 +140,6 @@ electronics.
 - Use the dashboard or SDK detection step before driving an actuator.
 - If an actuator reports `Error`, run initialization before normal use. If it
   remains in `Error`, leave it off and check the physical connection.
-- Allow Rockford's discharge phase to finish before touching or reconnecting an
+- Allow Rockford's discharge phase to finish before touching or disconnecting an
   actuator.
 - Disconnect wall power before changing the physical setup.
