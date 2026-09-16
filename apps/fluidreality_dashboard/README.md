@@ -198,7 +198,7 @@ for channels `5` through `7`. Lansing displays its channels in groups of eight.
 | `Present` | The actuator was found and evaluation is still in progress. |
 | `Ready` | Detection passed. The actuator can use the normal actuator tools. |
 | `Not connected` | The controller did not measure the expected response. Confirm that the barrel connector supplies 5 V, then inspect the selected port, plug, and cable with Power off. Redetect after correcting the connection. |
-| `Error` | The actuator was found, but its response is outside the normal range. Use Initialize and Diagnose; use Recover if it remains in error. |
+| `Error` | The actuator was found, but its response is outside the normal range. Run Recover, then Diagnose to confirm the result. |
 | `Active` | The actuator is currently being driven. |
 | `Discharging` | Reverse output is balancing the preceding drive. Wait for completion before starting another pulse. |
 | `Fast Init` | Fast Init is actively conditioning the actuator. |
@@ -217,9 +217,8 @@ an actuator classified as `Error`.
    barrel input and operating. Turn Power off before reseating the keyed actuator
    connector. Inspect the cable, plug, and selected port, then turn Power on and
    redetect.
-4. For `Error`, select the actuator and run **Initialize**. Run **Diagnose** to
-   check the result. If diagnosis still ends in error, run **Recover**, then run
-   **Diagnose** again.
+4. For `Error`, select the actuator and run **Recover**, then run **Diagnose**
+   to confirm it returns to `Ready`.
 5. If the actuator still does not reach `Ready`, turn Power off and compare it
    with a known-good actuator and port to isolate the actuator, cable, connector,
    or controller. Save the Event Log and process CSV before contacting Fluid

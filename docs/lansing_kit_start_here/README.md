@@ -98,5 +98,7 @@ The complete dashboard operator guide is available here:
 - Keep Power off until actuators are positioned and ready.
 - Do not handle actuator wiring while the output is connected.
 - Use the dashboard or SDK detection step before driving an actuator.
-- If an actuator reports `Error`, run initialization before normal use.
+- If an actuator reports `Error`, select it in the Dashboard and run
+  **Recover**, then run **Diagnose** to confirm it returns to `Ready`. If it
+  remains in `Error`, leave it off and check the physical connection.
 - Turn Power off before changing the physical setup.
