@@ -46,7 +46,7 @@ def test_board_profiles_are_independent():
     assert issubclass(EthernetBoard, NetworkBoard)
     assert Lansing.actuator_count == 24
     assert Rockford.actuator_count == 8
-    assert Lansing.not_connected_delta_ma == 0.05
+    assert Lansing.not_connected_delta_ma == 0.10
     assert Rockford.not_connected_delta_ma == 0.05
     assert not hasattr(Lansing, "network_status")
     assert hasattr(Rockford, "network_status")

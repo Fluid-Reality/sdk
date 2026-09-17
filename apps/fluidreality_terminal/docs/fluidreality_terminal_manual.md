@@ -336,8 +336,8 @@ delta_mA = abs(forward_mA - baseline_mA)
 
 | Stage and current delta | Classification |
 | --- | --- |
-| DT0 `< 0.05 mA` | `Not connected` |
-| DT0 `0.05–10.0 mA` | `Present`; continue with DT1 |
+| DT0 `< 0.10 mA` | `Not connected` |
+| DT0 `0.10–10.0 mA` | `Present`; continue with DT1 |
 | DT0 `> 10.0 mA` | `Error` |
 | DT1 or diagnosis `< 3.0 mA` | `Ready` |
 | DT1 or diagnosis `>= 3.0 mA` | `Error` |
@@ -792,7 +792,7 @@ For each actuator, the SDK:
 1. zeros the manual outputs for all 24 actuators, cancelling activation and discharge;
 2. measures baseline current;
 3. drives only the target forward at maximum output for 250 ms;
-4. returns `Not connected` below 0.05 mA or `Error` above 10 mA;
+4. returns `Not connected` below 0.10 mA or `Error` above 10 mA;
 5. otherwise keeps the target continuously forward for another 2 seconds;
 6. classifies the final delta and stores the result in the current SDK object; and
 7. stops the target without reverse discharge and restores the previous safety setting.
@@ -1517,7 +1517,7 @@ current, PSU current limit, or actuator output value.
 
 The target must be from `0.05` through `3.0 mA`:
 
-- DT0 alone classifies a delta below `0.05 mA` as `Not connected`;
+- DT0 alone classifies a delta below `0.10 mA` as `Not connected`;
 - after DT0 establishes presence, a delta below `3.0 mA` is `Ready`; and
 - a delta at or above `3.0 mA` is `Error`.
 
@@ -2001,7 +2001,7 @@ Proceed only if it reports `Ready`.
 
 ### Detection reports `Not connected`
 
-DT0 measured a current delta below `0.05 mA`. Keep the PSU connection off,
+DT0 measured a current delta below `0.10 mA`. Keep the PSU connection off,
 inspect the actuator and physical connection, confirm port numbering, and
 detect again.
 

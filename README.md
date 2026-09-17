@@ -153,7 +153,8 @@ tls:
 
 The `tls` section can use `certificate` instead of `certificate_file` to embed
 the PEM certificate in the YAML file. Certificate and hostname verification are
-enabled by default.
+enabled by default. Set `verify_certificate: false` only when the controller is
+on a trusted network and its certificate cannot be verified by the client.
 
 For local development, the
 [Fluid Reality Simulator](apps/fluidreality_simulator/README.md) listens at

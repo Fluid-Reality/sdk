@@ -25,6 +25,7 @@ from apps.fluidreality_dashboard.app import (
     BoardWorker,
     BluetoothConfigDialog,
     ConnectionDialog,
+    ConnectionProfileDialog,
     DashboardWindow,
     DiagnosisVoltageCurrentPlot,
     FluidRealityBoard,
@@ -33,9 +34,12 @@ from apps.fluidreality_dashboard.app import (
     NetworkConfigDialog,
     SecurityEncryptionDialog,
     WifiConfigDialog,
+    build_connection_profile_choices,
     build_network_endpoint,
     describe_connection_error,
+    discover_serial_port_details,
     power_connection_is_ready,
+    serial_port_display_name,
 )
 from fluidreality_dashboard.toggle import LabeledToggle
 
@@ -1964,6 +1968,81 @@ def test_connection_dialog_has_serial_and_network_choices(qt_app: QApplication) 
     dialog.close()
 
 
+def test_serial_ports_are_identified_sorted_and_use_the_device_endpoint(
+    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from serial.tools import list_ports as serial_list_ports
+
+    ports = [
+        SimpleNamespace(
+            device="COM10",
+            description="USB Serial Device",
+            manufacturer="Generic",
+            serial_number="B2",
+            vid=0x1234,
+            pid=0x0002,
+            hwid="USB VID:PID=1234:0002",
+        ),
+        SimpleNamespace(
+            device="COM3",
+            description="Rockford Controller",
+            manufacturer="Fluid Reality",
+            serial_number="FR001",
+            vid=0x1209,
+            pid=0x0001,
+            hwid="USB VID:PID=1209:0001",
+        ),
+        SimpleNamespace(
+            device="COM2",
+            description="Debug adapter",
+            manufacturer="Generic",
+            serial_number="A1",
+            vid=0x1234,
+            pid=0x0001,
+            hwid="USB VID:PID=1234:0001",
+        ),
+        SimpleNamespace(
+            device="COM8",
+            description="Standard Serial over Bluetooth link (COM8)",
+            manufacturer="Microsoft",
+            serial_number=None,
+            vid=None,
+            pid=None,
+            hwid="BTHENUM",
+        ),
+    ]
+    monkeypatch.setattr(serial_list_ports, "comports", lambda: ports)
+
+    discovered = discover_serial_port_details()
+    assert [item["device"] for item in discovered] == ["COM2", "COM3", "COM10"]
+    assert serial_port_display_name(discovered[0]) == "COM2"
+
+    dialog = ConnectionDialog()
+    attempts: list[tuple[str, dict[str, object]]] = []
+    dialog.attempt_requested.connect(
+        lambda endpoint, options: attempts.append((endpoint, options))
+    )
+    try:
+        assert dialog.serial_port.count() == 3
+        assert [dialog.serial_port.itemText(index) for index in range(3)] == [
+            "COM2",
+            "COM3",
+            "COM10",
+        ]
+        dialog.serial_port.setCurrentIndex(1)
+        assert dialog.serial_port.currentData()["device"] == "COM3"
+        assert dialog.serial_detail_values["description"].text() == (
+            "Rockford Controller"
+        )
+        assert dialog.serial_detail_values["manufacturer"].text() == "Fluid Reality"
+        assert dialog.serial_detail_values["serial_number"].text() == "FR001"
+        assert dialog.serial_detail_values["usb_id"].text() == "1209:0001"
+        dialog._attempt_connection()
+        assert attempts == [("COM3", {})]
+    finally:
+        dialog.close()
+
+
 def test_network_form_stays_top_aligned_when_encryption_is_toggled(
     qt_app: QApplication,
 ) -> None:
@@ -2114,6 +2193,7 @@ def test_dashboard_connection_bar_matches_network_setup_behavior(
         assert window.connection_label.text() == "Not connected"
         assert window.connection_label.property("kind") == "neutral"
         assert window.disconnect_btn.isHidden()
+        assert window.connection_profile_btn.isHidden()
         assert window.connect_btn.isEnabled()
 
         window._on_connected_changed(True, "Rockford 1.0")
@@ -2122,6 +2202,8 @@ def test_dashboard_connection_bar_matches_network_setup_behavior(
         assert window.connection_label.property("kind") == "ok"
         assert not window.disconnect_btn.isHidden()
         assert window.disconnect_btn.isEnabled()
+        assert not window.connection_profile_btn.isHidden()
+        assert window.connection_profile_btn.isEnabled()
         assert not window.connect_btn.isEnabled()
 
         window._on_connected_changed(False, "Connection closed")
@@ -2129,7 +2211,125 @@ def test_dashboard_connection_bar_matches_network_setup_behavior(
         assert window.connection_label.text() == "Not connected"
         assert window.connection_label.property("kind") == "neutral"
         assert window.disconnect_btn.isHidden()
+        assert window.connection_profile_btn.isHidden()
         assert window.connect_btn.isEnabled()
+    finally:
+        window.close()
+
+
+def test_connection_profile_choices_include_only_enabled_board_methods() -> None:
+    choices = build_connection_profile_choices(
+        "COM17",
+        {},
+        {"BLT": "1", "NET": "1", "AUTH": "1", "TLS": "1"},
+        bluetooth={"ENABLED": "ON", "NAME": "FR-Rockford-A1"},
+        network={"TCP": "ON", "IP": "10.0.6.143", "PORT": "49765"},
+        tls={"ENABLED": "OFF"},
+        access_token="board-token",
+    )
+
+    assert [choice["transport"] for choice in choices] == [
+        "serial",
+        "bluetooth",
+        "tcp",
+    ]
+    assert choices[0]["serial_port"] == "COM17"
+    assert choices[1]["bluetooth_device"] == "FR-Rockford-A1"
+    assert choices[2] == {
+        "transport": "tcp",
+        "host": "10.0.6.143",
+        "port": 49765,
+        "access_token": "board-token",
+    }
+
+
+def test_connection_profile_dialog_builds_endpoint_and_yaml() -> None:
+    dialog = ConnectionProfileDialog(
+        [
+            {"transport": "serial", "serial_port": "COM17"},
+            {
+                "transport": "tls",
+                "host": "10.0.6.143",
+                "port": 49765,
+                "access_token": "secret",
+                "tls_verify_certificate": False,
+            },
+        ]
+    )
+    try:
+        assert not hasattr(dialog, "baudrate")
+        assert "baudrate" not in dialog.yaml_preview.toPlainText()
+        dialog.transport.setCurrentIndex(1)
+
+        assert dialog.endpoint.text() == "tls://10.0.6.143:49765"
+        assert "transport: tls" in dialog.yaml_preview.toPlainText()
+        assert "access_token: secret" in dialog.yaml_preview.toPlainText()
+        assert "verify_certificate: false" in dialog.yaml_preview.toPlainText()
+        assert dialog.save_file.isEnabled()
+    finally:
+        dialog.close()
+
+
+def test_worker_reads_enabled_connection_profile_methods() -> None:
+    class ProfileBoard:
+        def __init__(self) -> None:
+            self.commands: list[tuple[object, ...]] = []
+
+        def raw_command(self, *parts: object):
+            self.commands.append(parts)
+            fields = {
+                ("BLT", "STATUS"): {
+                    "ENABLED": "ON",
+                    "NAME": "FR-Rockford-A1",
+                },
+                ("NET", "STATUS"): {
+                    "TCP": "ON",
+                    "IP": "10.0.6.143",
+                    "PORT": "49765",
+                },
+                ("NET", "TCP"): {"ENABLED": "ON", "PORT": "49765"},
+                ("NET", "TLS"): {"ENABLED": "ON", "READY": "YES"},
+                ("NET", "KEY"): {"TOKEN": "board-token"},
+            }[parts]
+            return [SimpleNamespace(fields=fields)]
+
+    worker = BoardWorker()
+    board = ProfileBoard()
+    worker._board = board
+    worker._endpoint = "COM17"
+    worker._capabilities = {"BLT": "1", "NET": "1", "TLS": "1", "AUTH": "1"}
+    emitted: list[list[dict[str, object]]] = []
+    worker.connection_profiles_ready.connect(emitted.append)
+
+    worker._read_connection_profiles()
+
+    assert [item["transport"] for item in emitted[0]] == [
+        "serial",
+        "bluetooth",
+        "tcp",
+        "tls",
+    ]
+    assert emitted[0][-1]["tls_verify_certificate"] is False
+    assert board.commands == [
+        ("BLT", "STATUS"),
+        ("NET", "STATUS"),
+        ("NET", "TCP"),
+        ("NET", "TLS"),
+        ("NET", "KEY"),
+    ]
+
+
+def test_dashboard_connection_profile_button_requests_live_settings() -> None:
+    window = DashboardWindow()
+    commands: list[tuple[str, tuple[object, ...]]] = []
+    window.worker.enqueue = lambda command, *args: commands.append((command, args))
+    try:
+        window._on_connected_changed(True, "COM17 - Rockford 1.1")
+        window.connection_profile_btn.click()
+
+        assert commands == [("read_connection_profiles", ())]
+        assert window.connection_profile_btn.text() == "Loading…"
+        assert not window.connection_profile_btn.isEnabled()
     finally:
         window.close()
 
@@ -2714,7 +2914,9 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
         assert window.tool_sections.itemAt(0).alignment() & Qt.AlignTop
         assert window.tool_sections.itemAt(1).alignment() & Qt.AlignTop
         assert not hasattr(window, "selected_actuator_label")
-        assert window.actuator_tools_panel.size() == window.board_tools_panel.size()
+        assert window.actuator_tools_panel.width() == 190
+        assert window.board_tools_panel.width() == 380
+        assert window.actuator_tools_panel.height() == window.board_tools_panel.height()
         tool_buttons = (
             window.init_btn,
             window.fast_init_btn,
@@ -2732,6 +2934,27 @@ def test_board_tools_are_beside_actuator_tools(qt_app: QApplication) -> None:
             window.factory_reset_btn,
         )
         assert {button.height() for button in tool_buttons} == {40}
+        first_column = (
+            window.board_settings_btn,
+            window.bluetooth_config_btn,
+            window.wifi_config_btn,
+            window.network_config_btn,
+            window.security_config_btn,
+        )
+        second_column = (
+            window.fluid_mesh_btn,
+            window.board_terminal_btn,
+            window.firmware_update_btn,
+            window.factory_reset_btn,
+        )
+        for row, button in enumerate(first_column):
+            index = window.board_tools_grid.indexOf(button)
+            assert window.board_tools_grid.getItemPosition(index) == (row, 0, 1, 1)
+            assert button.property("compact") is True
+        for row, button in enumerate(second_column):
+            index = window.board_tools_grid.indexOf(button)
+            assert window.board_tools_grid.getItemPosition(index) == (row, 1, 1, 1)
+            assert button.property("compact") is True
         assert window.board_settings_btn.text() == "Board Settings"
         assert window.bluetooth_config_btn.text() == "Bluetooth Config"
         assert window.wifi_config_btn.text() == "Wi-Fi Config"

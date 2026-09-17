@@ -20,6 +20,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 APP_ROOT = Path(__file__).resolve().parent
 APPS_ROOT = APP_ROOT.parent
@@ -77,6 +78,7 @@ from fluid_reality import (
     ActuatorState,
     BluetoothDevice,
     Board,
+    ConnectionProfile,
     Diagnosis,
     FirmwareError,
     Lansing,
@@ -179,6 +181,151 @@ def build_network_endpoint(scheme: str, host: str, port: int) -> str:
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return f"{scheme}://{host}:{int(port)}"
+
+
+def discover_serial_port_details() -> list[dict[str, Any]]:
+    """Return naturally sorted serial-port metadata for the connection dialog."""
+
+    try:
+        from serial.tools import list_ports as serial_list_ports
+
+        ports = [
+            {
+                "device": str(item.device),
+                "description": str(item.description or ""),
+                "manufacturer": str(item.manufacturer or ""),
+                "serial_number": str(item.serial_number or ""),
+                "vid": item.vid,
+                "pid": item.pid,
+                "hwid": str(item.hwid or ""),
+            }
+            for item in serial_list_ports.comports()
+        ]
+    except Exception:
+        ports = [{"device": device} for device in list_ports()]
+
+    def natural_key(value: str) -> tuple[object, ...]:
+        return tuple(
+            int(part) if part.isdigit() else part.casefold()
+            for part in re.split(r"(\d+)", value)
+            if part
+        )
+
+    def identity(item: dict[str, Any]) -> str:
+        return " ".join(
+            str(item.get(field, ""))
+            for field in ("description", "manufacturer", "hwid")
+        ).casefold()
+
+    ports = [item for item in ports if "bluetooth" not in identity(item)]
+
+    def sort_key(item: dict[str, Any]) -> tuple[object, ...]:
+        return natural_key(str(item["device"]))
+
+    return sorted(ports, key=sort_key)
+
+
+def serial_port_display_name(details: dict[str, Any]) -> str:
+    return str(details["device"])
+
+
+def serial_port_description(details: dict[str, Any]) -> str:
+    lines = [f"Port: {details['device']}"]
+    for label, field in (
+        ("Device", "description"),
+        ("Manufacturer", "manufacturer"),
+        ("Serial number", "serial_number"),
+    ):
+        value = str(details.get(field) or "").strip()
+        if value and value.casefold() != "n/a":
+            lines.append(f"{label}: {value}")
+    vid = details.get("vid")
+    pid = details.get("pid")
+    if vid is not None and pid is not None:
+        lines.append(f"USB ID: {int(vid):04X}:{int(pid):04X}")
+    return "\n".join(lines)
+
+
+def build_connection_profile_choices(
+    endpoint: str,
+    options: dict[str, Any],
+    capabilities: dict[str, str],
+    *,
+    bluetooth: dict[str, str] | None = None,
+    network: dict[str, str] | None = None,
+    tls: dict[str, str] | None = None,
+    access_token: str = "",
+) -> list[dict[str, Any]]:
+    """Describe the connection profiles usable by the connected controller."""
+
+    endpoint = endpoint.strip()
+    lower_endpoint = endpoint.lower()
+    choices: list[dict[str, Any]] = [
+        {
+            "transport": "serial",
+            "serial_port": endpoint if "://" not in endpoint else "",
+        }
+    ]
+    token = str(options.get("network_token") or access_token or "")
+
+    bluetooth = bluetooth or {}
+    bluetooth_enabled = bluetooth.get("ENABLED", bluetooth.get("STATE", "")).upper()
+    if capabilities.get("BLT") not in {None, "0"} and bluetooth_enabled in {
+        "ON",
+        "ENABLED",
+        "1",
+    }:
+        device = (
+            unquote(endpoint[6:]).strip("/")
+            if lower_endpoint.startswith("ble://")
+            else bluetooth.get("NAME", "")
+        )
+        choices.append(
+            {
+                "transport": "bluetooth",
+                "bluetooth_device": device,
+                "bluetooth_pair": bool(options.get("pair", False)),
+                "access_token": token,
+            }
+        )
+
+    network = network or {}
+    tls = tls or {}
+    tcp_enabled = network.get("TCP", network.get("ENABLED", "")).upper()
+    if capabilities.get("NET") not in {None, "0"} and tcp_enabled in {
+        "ON",
+        "ENABLED",
+        "1",
+    }:
+        parsed = urlparse(endpoint) if lower_endpoint.startswith(("tcp://", "tls://")) else None
+        host = (parsed.hostname if parsed is not None else None) or network.get("IP", "")
+        if host == "0.0.0.0":
+            host = network.get("HOST", "")
+        port = int((parsed.port if parsed is not None else None) or network.get("PORT", 49765))
+        common = {"host": host, "port": port, "access_token": token}
+        choices.append({"transport": "tcp", **common})
+        tls_enabled = tls.get("ENABLED", tls.get("STATE", "")).upper()
+        if capabilities.get("TLS") not in {None, "0"} and tls_enabled in {
+            "ON",
+            "ENABLED",
+            "1",
+        }:
+            choices.append(
+                {
+                    "transport": "tls",
+                    **common,
+                    "tls_certificate_file": str(options.get("tls_ca_file") or ""),
+                    "tls_server_hostname": str(options.get("tls_server_hostname") or ""),
+                    "tls_verify_certificate": bool(
+                        options.get(
+                            "tls_verify_certificate",
+                            bool(options.get("tls_ca_file") or options.get("tls_ca_data")),
+                        )
+                    ),
+                    "tls_verify_hostname": bool(options.get("tls_check_hostname", True)),
+                }
+            )
+    return choices
 
 
 def describe_connection_error(
@@ -296,6 +443,10 @@ class ConnectionDialog(QDialog):
         self.serial_port = QComboBox()
         self.serial_port.setEditable(True)
         self.serial_port.setMinimumWidth(300)
+        self.serial_port.setMaxVisibleItems(12)
+        self.serial_port.setInsertPolicy(QComboBox.NoInsert)
+        self.serial_port.currentIndexChanged.connect(self._update_serial_port_details)
+        self.serial_port.editTextChanged.connect(self._update_serial_port_details)
         self.refresh_ports_button = configure_refresh_button(
             QPushButton(), "Refresh serial ports"
         )
@@ -304,6 +455,36 @@ class ConnectionDialog(QDialog):
         row.addWidget(self.serial_port, 1)
         row.addWidget(self.refresh_ports_button)
         layout.addLayout(row)
+
+        self.serial_details_panel = QFrame()
+        self.serial_details_panel.setObjectName("ConnectionOptions")
+        details_layout = QGridLayout(self.serial_details_panel)
+        details_layout.setContentsMargins(12, 10, 12, 10)
+        details_layout.setHorizontalSpacing(14)
+        details_layout.setVerticalSpacing(5)
+        details_title = QLabel("Selected device")
+        details_title.setObjectName("SectionTitle")
+        details_layout.addWidget(details_title, 0, 0, 1, 2)
+        self.serial_detail_values: dict[str, QLabel] = {}
+        for row_index, (field, label_text) in enumerate(
+            (
+                ("description", "Device"),
+                ("manufacturer", "Manufacturer"),
+                ("serial_number", "Serial number"),
+                ("usb_id", "USB ID"),
+            ),
+            start=1,
+        ):
+            label = form_label(label_text)
+            value = QLabel("—")
+            value.setObjectName("SerialDetailValue")
+            value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            value.setWordWrap(True)
+            self.serial_detail_values[field] = value
+            details_layout.addWidget(label, row_index, 0, Qt.AlignTop)
+            details_layout.addWidget(value, row_index, 1)
+        details_layout.setColumnStretch(1, 1)
+        layout.addWidget(self.serial_details_panel)
         layout.addStretch()
         return tab
 
@@ -386,19 +567,72 @@ class ConnectionDialog(QDialog):
         return tab
 
     def refresh_serial_ports(self) -> None:
-        current = self.serial_port.currentText().strip()
+        current = self._selected_serial_port()
         try:
-            ports = list_ports()
+            ports = discover_serial_port_details()
         except Exception:
             ports = []
-        if current and current not in ports:
-            ports.insert(0, current)
         self.serial_port.blockSignals(True)
         self.serial_port.clear()
-        self.serial_port.addItems(ports)
-        if current:
-            self.serial_port.setCurrentText(current)
+        selected_index = -1
+        for details in ports:
+            index = self.serial_port.count()
+            self.serial_port.addItem(serial_port_display_name(details), details)
+            self.serial_port.setItemData(
+                index, serial_port_description(details), Qt.ToolTipRole
+            )
+            if str(details["device"]).casefold() == current.casefold():
+                selected_index = index
+        if selected_index >= 0:
+            self.serial_port.setCurrentIndex(selected_index)
+        elif current:
+            self.serial_port.setCurrentIndex(-1)
+            self.serial_port.setEditText(current)
+        elif ports:
+            self.serial_port.setCurrentIndex(0)
+        else:
+            self.serial_port.setCurrentIndex(-1)
+            self.serial_port.setEditText("")
         self.serial_port.blockSignals(False)
+        self._update_serial_port_details()
+
+    def _selected_serial_port(self) -> str:
+        details = self.serial_port.currentData()
+        if isinstance(details, dict) and details.get("device"):
+            return str(details["device"]).strip()
+        return self.serial_port.currentText().strip()
+
+    def _update_serial_port_details(self, *_args: object) -> None:
+        details = self.serial_port.currentData()
+        if isinstance(details, dict):
+            vid = details.get("vid")
+            pid = details.get("pid")
+            values = {
+                "description": details.get("description"),
+                "manufacturer": details.get("manufacturer"),
+                "serial_number": details.get("serial_number"),
+                "usb_id": (
+                    f"{int(vid):04X}:{int(pid):04X}"
+                    if vid is not None and pid is not None
+                    else None
+                ),
+            }
+            for field, label in self.serial_detail_values.items():
+                value = str(values.get(field) or "").strip()
+                label.setText(value if value and value.casefold() != "n/a" else "—")
+            self.serial_details_panel.setEnabled(True)
+        elif self.serial_port.currentText().strip():
+            for label in self.serial_detail_values.values():
+                label.setText("—")
+            self.serial_detail_values["description"].setText("Custom serial port")
+            self.serial_details_panel.setEnabled(True)
+        else:
+            for label in self.serial_detail_values.values():
+                label.setText("—")
+            self.serial_detail_values["description"].setText(
+                "No serial devices found. Connect the controller by USB and refresh."
+            )
+            self.serial_details_panel.setEnabled(False)
 
     def refresh_bluetooth_devices(self) -> None:
         if self._bluetooth_scan is not None and self._bluetooth_scan.isRunning():
@@ -441,7 +675,7 @@ class ConnectionDialog(QDialog):
     def _attempt_connection(self) -> None:
         self.error_label.hide()
         if self.connection_tabs.currentIndex() == 0:
-            endpoint = self.serial_port.currentText().strip()
+            endpoint = self._selected_serial_port()
             if not endpoint:
                 self._show_error("Select an available serial port.")
                 return
@@ -495,6 +729,296 @@ class ConnectionDialog(QDialog):
         super().closeEvent(event)
 
 
+class ConnectionProfileDialog(QDialog):
+    """Create an SDK endpoint string or YAML connection file for this board."""
+
+    TRANSPORT_LABELS = {
+        "serial": "Serial",
+        "bluetooth": "Bluetooth",
+        "tcp": "TCP",
+        "tls": "TLS",
+    }
+
+    def __init__(self, choices: list[dict[str, Any]], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Create Connection Profile")
+        self.setObjectName("ToolDialog")
+        self.setModal(True)
+        self.resize(900, 590)
+        self.setMinimumSize(820, 520)
+        self._choices = {str(item["transport"]): dict(item) for item in choices}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(12)
+        title = QLabel("Connection Profile")
+        title.setObjectName("DialogTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Create a reusable connection for any method currently enabled on "
+            "this controller. Copy the endpoint for command-line use or save the "
+            "complete settings as a YAML connection file."
+        )
+        explanation.setObjectName("ConnectionHint")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        settings_panel = QFrame()
+        settings_panel.setObjectName("Panel")
+        settings_layout = QVBoxLayout(settings_panel)
+        settings_layout.setContentsMargins(16, 14, 16, 16)
+        settings_layout.setSpacing(10)
+        settings_title = QLabel("Connection settings")
+        settings_title.setObjectName("SectionTitle")
+        settings_layout.addWidget(settings_title)
+
+        output_panel = QFrame()
+        output_panel.setObjectName("Panel")
+        output_layout = QVBoxLayout(output_panel)
+        output_layout.setContentsMargins(16, 14, 16, 16)
+        output_layout.setSpacing(9)
+        output_title = QLabel("Generated connection")
+        output_title.setObjectName("SectionTitle")
+        output_layout.addWidget(output_title)
+
+        body.addWidget(settings_panel, 4)
+        body.addWidget(output_panel, 5)
+        layout.addLayout(body, 1)
+
+        self.form = QFormLayout()
+        self.form.setHorizontalSpacing(14)
+        self.form.setVerticalSpacing(9)
+        self.transport = QComboBox()
+        for name in ("serial", "bluetooth", "tcp", "tls"):
+            if name in self._choices:
+                self.transport.addItem(self.TRANSPORT_LABELS[name], name)
+        self.serial_port = QLineEdit()
+        self.serial_port.setPlaceholderText("COM port, for example COM17")
+        self.bluetooth_device = QLineEdit()
+        self.bluetooth_device.setPlaceholderText("Bluetooth board name or device ID")
+        self.bluetooth_pair = LabeledToggle("Pair and encrypt link")
+        self.host = QLineEdit()
+        self.host.setPlaceholderText("Board hostname or IP address")
+        self.port = QSpinBox()
+        self.port.setRange(1, 65535)
+        self.access_token = QLineEdit()
+        self.access_token.setPlaceholderText("Optional access token")
+        self.access_token_visibility = add_secret_visibility(
+            self.access_token, secret_name="access token"
+        )
+        self.tls_certificate_file = QLineEdit()
+        self.tls_certificate_file.setPlaceholderText("Optional CA certificate file")
+        certificate_row = QWidget()
+        certificate_layout = QHBoxLayout(certificate_row)
+        certificate_layout.setContentsMargins(0, 0, 0, 0)
+        certificate_layout.setSpacing(6)
+        certificate_layout.addWidget(self.tls_certificate_file, 1)
+        self.browse_certificate = QPushButton("Browse…")
+        certificate_layout.addWidget(self.browse_certificate)
+        self.tls_server_hostname = QLineEdit()
+        self.tls_server_hostname.setPlaceholderText("Optional certificate hostname")
+        self.tls_verify_certificate = LabeledToggle("Verify server certificate")
+        self.tls_verify_hostname = LabeledToggle("Verify certificate hostname")
+
+        self.form.addRow(form_label("Connection method"), self.transport)
+        self.form.addRow(form_label("Serial port"), self.serial_port)
+        self.form.addRow(form_label("Bluetooth device"), self.bluetooth_device)
+        self.form.addRow(self.bluetooth_pair)
+        self.form.addRow(form_label("Host"), self.host)
+        self.form.addRow(form_label("Port"), self.port)
+        self.form.addRow(form_label("Access token"), self.access_token)
+        self.form.addRow(form_label("CA certificate"), certificate_row)
+        self.form.addRow(form_label("Server hostname"), self.tls_server_hostname)
+        self.form.addRow(self.tls_verify_certificate)
+        self.form.addRow(self.tls_verify_hostname)
+        settings_layout.addLayout(self.form)
+        settings_layout.addStretch()
+
+        endpoint_label = form_label("Connection string")
+        output_layout.addWidget(endpoint_label)
+        endpoint_row = QHBoxLayout()
+        self.endpoint = QLineEdit()
+        self.endpoint.setReadOnly(True)
+        self.copy_endpoint = QPushButton("Copy string")
+        endpoint_row.addWidget(self.endpoint, 1)
+        endpoint_row.addWidget(self.copy_endpoint)
+        output_layout.addLayout(endpoint_row)
+
+        yaml_label = form_label("Connection file preview")
+        output_layout.addWidget(yaml_label)
+        self.yaml_preview = QTextEdit()
+        self.yaml_preview.setReadOnly(True)
+        self.yaml_preview.setMinimumHeight(250)
+        output_layout.addWidget(self.yaml_preview, 1)
+        self.error_label = QLabel()
+        self.error_label.setObjectName("ErrorText")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        output_layout.addWidget(self.error_label)
+
+        output_buttons = QHBoxLayout()
+        self.copy_yaml = QPushButton("Copy file text")
+        self.save_file = QPushButton("Save connection file…")
+        output_buttons.addWidget(self.copy_yaml)
+        output_buttons.addWidget(self.save_file)
+        output_buttons.addStretch()
+        output_layout.addLayout(output_buttons)
+
+        footer = QHBoxLayout()
+        self.close_button = QPushButton("Close")
+        self.close_button.setObjectName("quietButton")
+        footer.addStretch()
+        footer.addWidget(self.close_button)
+        layout.addLayout(footer)
+
+        self.transport.currentIndexChanged.connect(self._transport_changed)
+        for editor in (
+            self.serial_port,
+            self.bluetooth_device,
+            self.host,
+            self.access_token,
+            self.tls_certificate_file,
+            self.tls_server_hostname,
+        ):
+            editor.textChanged.connect(self._refresh_preview)
+        self.port.valueChanged.connect(self._refresh_preview)
+        self.bluetooth_pair.toggled.connect(self._refresh_preview)
+        self.tls_verify_certificate.toggled.connect(self._refresh_preview)
+        self.tls_verify_hostname.toggled.connect(self._refresh_preview)
+        self.browse_certificate.clicked.connect(self._choose_certificate)
+        self.copy_endpoint.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.endpoint.text())
+        )
+        self.copy_yaml.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.yaml_preview.toPlainText())
+        )
+        self.save_file.clicked.connect(self._save_file)
+        self.close_button.clicked.connect(self.accept)
+        self._transport_changed()
+
+    def _transport_changed(self) -> None:
+        name = str(self.transport.currentData())
+        values = self._choices.get(name, {})
+        self.serial_port.setText(str(values.get("serial_port") or ""))
+        self.bluetooth_device.setText(str(values.get("bluetooth_device") or ""))
+        self.bluetooth_pair.setChecked(bool(values.get("bluetooth_pair", False)))
+        self.host.setText(str(values.get("host") or ""))
+        self.port.setValue(int(values.get("port", 49765)))
+        self.access_token.setText(str(values.get("access_token") or ""))
+        self.tls_certificate_file.setText(
+            str(values.get("tls_certificate_file") or "")
+        )
+        self.tls_server_hostname.setText(
+            str(values.get("tls_server_hostname") or "")
+        )
+        self.tls_verify_certificate.setChecked(
+            bool(values.get("tls_verify_certificate", True))
+        )
+        self.tls_verify_hostname.setChecked(
+            bool(values.get("tls_verify_hostname", True))
+        )
+
+        serial = name == "serial"
+        bluetooth = name == "bluetooth"
+        network = name in {"tcp", "tls"}
+        secure = name == "tls"
+        for row, visible in (
+            (1, serial),
+            (2, bluetooth),
+            (3, bluetooth),
+            (4, network),
+            (5, network),
+            (6, name in {"bluetooth", "tcp", "tls"}),
+            (7, secure),
+            (8, secure),
+            (9, secure),
+            (10, secure),
+        ):
+            self.form.setRowVisible(row, visible)
+        self._refresh_preview()
+
+    def profile(self) -> ConnectionProfile:
+        name = str(self.transport.currentData())
+        common = {
+            "transport": name,
+            "access_token": self.access_token.text().strip() or None,
+        }
+        if name == "serial":
+            return ConnectionProfile(
+                transport=name,
+                serial_port=self.serial_port.text().strip(),
+            )
+        if name == "bluetooth":
+            return ConnectionProfile(
+                **common,
+                bluetooth_device=self.bluetooth_device.text().strip(),
+                bluetooth_pair=self.bluetooth_pair.isChecked(),
+            )
+        if name == "tcp":
+            return ConnectionProfile(
+                **common,
+                host=self.host.text().strip(),
+                port=self.port.value(),
+            )
+        return ConnectionProfile(
+            **common,
+            host=self.host.text().strip(),
+            port=self.port.value(),
+            tls_certificate_file=self.tls_certificate_file.text().strip() or None,
+            tls_server_hostname=self.tls_server_hostname.text().strip() or None,
+            tls_verify_certificate=self.tls_verify_certificate.isChecked(),
+            tls_verify_hostname=self.tls_verify_hostname.isChecked(),
+        )
+
+    def _refresh_preview(self) -> None:
+        try:
+            profile = self.profile()
+        except (TypeError, ValueError) as exc:
+            self.endpoint.clear()
+            self.yaml_preview.clear()
+            self.error_label.setText(str(exc))
+            self.error_label.show()
+            self.copy_endpoint.setEnabled(False)
+            self.copy_yaml.setEnabled(False)
+            self.save_file.setEnabled(False)
+            return
+        self.error_label.hide()
+        self.endpoint.setText(profile.endpoint)
+        self.yaml_preview.setPlainText(profile.to_yaml())
+        self.copy_endpoint.setEnabled(True)
+        self.copy_yaml.setEnabled(True)
+        self.save_file.setEnabled(True)
+
+    def _choose_certificate(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select CA certificate",
+            "",
+            "Certificates (*.pem *.crt *.cer);;All files (*)",
+        )
+        if path:
+            self.tls_certificate_file.setText(path)
+
+    def _save_file(self) -> None:
+        try:
+            profile = self.profile()
+        except (TypeError, ValueError) as exc:
+            self.error_label.setText(str(exc))
+            self.error_label.show()
+            return
+        name = str(self.transport.currentData())
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save connection file",
+            f"fluid-reality-{name}.yaml",
+            "YAML connection files (*.yaml *.yml)",
+        )
+        if path:
+            profile.save(path)
+
+
 class BoardWorker(QThread):
     connected_changed = Signal(bool, str)
     capabilities_ready = Signal(dict)
@@ -528,6 +1052,8 @@ class BoardWorker(QThread):
     network_config_failed = Signal(str)
     security_config_ready = Signal(str, dict)
     security_config_failed = Signal(str)
+    connection_profiles_ready = Signal(list)
+    connection_profiles_failed = Signal(str)
     firmware_update_progress = Signal(int, int)
     firmware_update_finished = Signal(str, str)
     firmware_update_failed = Signal(str)
@@ -652,6 +1178,8 @@ class BoardWorker(QThread):
                     self._write_network_config(dict(args[0]))
                 elif command == "read_security_config":
                     self._read_security_config()
+                elif command == "read_connection_profiles":
+                    self._read_connection_profiles()
                 elif command == "write_security_config":
                     self._write_security_config(dict(args[0]))
                 elif command == "tls_enable":
@@ -700,6 +1228,8 @@ class BoardWorker(QThread):
                     "tls_provision",
                 }:
                     self.security_config_failed.emit(error_message)
+                if command == "read_connection_profiles":
+                    self.connection_profiles_failed.emit(error_message)
                 if command == "firmware_update":
                     if self._board is not None:
                         try:
@@ -1334,6 +1864,51 @@ class BoardWorker(QThread):
             tls = self._network_command("TLS")
         tls["AUTH_STATE"] = auth.get("STATE", "ON" if token else "OFF")
         self.security_config_ready.emit(token, tls)
+
+    def _read_connection_profiles(self) -> None:
+        """Read only the settings needed to create usable client profiles."""
+
+        self._require_board()
+        bluetooth: dict[str, str] = {}
+        network: dict[str, str] = {}
+        tls: dict[str, str] = {}
+        token = ""
+        if self._capabilities.get("BLT") not in {None, "0"}:
+            try:
+                bluetooth = self._bluetooth_status()
+            except Exception:
+                bluetooth = {}
+        if self._capabilities.get("NET") not in {None, "0"}:
+            try:
+                network = self._network_command("STATUS")
+            except Exception:
+                network = {}
+            try:
+                tcp = self._network_command("TCP")
+            except Exception:
+                tcp = {}
+            network["TCP"] = tcp.get("ENABLED", network.get("TCP", ""))
+            network["PORT"] = tcp.get("PORT", network.get("PORT", "49765"))
+            if self._capabilities.get("TLS") not in {None, "0"}:
+                try:
+                    tls = self._network_command("TLS")
+                except Exception:
+                    tls = {}
+            if self._capabilities.get("AUTH") not in {None, "0"}:
+                try:
+                    token = self._network_command("KEY").get("TOKEN", "")
+                except Exception:
+                    token = ""
+        choices = build_connection_profile_choices(
+            self._endpoint,
+            self._connection_options,
+            self._capabilities,
+            bluetooth=bluetooth,
+            network=network,
+            tls=tls,
+            access_token=token,
+        )
+        self.connection_profiles_ready.emit(choices)
 
     def _write_security_token(self, token: str) -> None:
         fields = self._network_command("KEY", "SET", token)
@@ -5090,6 +5665,7 @@ class DashboardWindow(QMainWindow):
         self._psc_on = False
         self._square_running = False
         self._connection_dialog: ConnectionDialog | None = None
+        self._connection_profile_dialog: ConnectionProfileDialog | None = None
         self._board_settings_dialog: BoardSettingsDialog | None = None
         self._bluetooth_config_dialog: BluetoothConfigDialog | None = None
         self._wifi_config_dialog: WifiConfigDialog | None = None
@@ -5133,6 +5709,12 @@ class DashboardWindow(QMainWindow):
         self.worker.network_config_failed.connect(self._on_network_config_failed)
         self.worker.security_config_ready.connect(self._on_security_config_ready)
         self.worker.security_config_failed.connect(self._on_security_config_failed)
+        self.worker.connection_profiles_ready.connect(
+            self._on_connection_profiles_ready
+        )
+        self.worker.connection_profiles_failed.connect(
+            self._on_connection_profiles_failed
+        )
         self.worker.firmware_update_progress.connect(self._on_firmware_update_progress)
         self.worker.firmware_update_finished.connect(self._on_firmware_update_finished)
         self.worker.firmware_update_failed.connect(self._on_firmware_update_failed)
@@ -5233,11 +5815,19 @@ class DashboardWindow(QMainWindow):
         self.disconnect_btn.setObjectName("quietButton")
         self.connection_label = QLabel("Not connected")
         self.connection_label.setProperty("kind", "neutral")
+        self.connection_profile_btn = QPushButton("Save Connection")
+        self.connection_profile_btn.setObjectName("quietButton")
+        self.connection_profile_btn.setToolTip(
+            "Copy a connection string or save a reusable connection file"
+        )
 
         self.connect_btn.clicked.connect(self._connect)
         self.disconnect_btn.clicked.connect(lambda: self.worker.enqueue("disconnect"))
+        self.connection_profile_btn.clicked.connect(self._show_connection_profile)
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.hide()
+        self.connection_profile_btn.setEnabled(False)
+        self.connection_profile_btn.hide()
 
         layout.addWidget(heading)
         layout.addSpacing(8)
@@ -5246,6 +5836,7 @@ class DashboardWindow(QMainWindow):
         layout.addWidget(self.connect_btn)
         layout.addWidget(self.disconnect_btn)
         layout.addWidget(self.connection_label)
+        layout.addWidget(self.connection_profile_btn)
         return bar
 
     def _build_metrics_bar(self) -> QWidget:
@@ -5286,21 +5877,27 @@ class DashboardWindow(QMainWindow):
         header = QHBoxLayout()
         label = QLabel("Actuators")
         label.setObjectName("SectionTitle")
-        self.group_label = form_label("Group")
-        self.group_combo = QComboBox()
-        self.group_combo.currentIndexChanged.connect(self._on_group_changed)
         self.redetect_all_btn = QPushButton()
         configure_refresh_button(self.redetect_all_btn, "Redetect all actuators")
         self.redetect_all_btn.clicked.connect(
             lambda: self.worker.enqueue("detect_all")
         )
-        self.group_label.setVisible(False)
-        self.group_combo.setVisible(False)
         header.addWidget(label)
         header.addStretch()
-        header.addWidget(self.group_label)
-        header.addWidget(self.group_combo)
         header.addWidget(self.redetect_all_btn)
+
+        self.group_controls = QWidget()
+        group_row = QHBoxLayout(self.group_controls)
+        group_row.setContentsMargins(0, 0, 0, 0)
+        group_row.setSpacing(8)
+        self.group_label = form_label("Group")
+        self.group_combo = QComboBox()
+        self.group_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.group_combo.setMinimumWidth(0)
+        self.group_combo.currentIndexChanged.connect(self._on_group_changed)
+        group_row.addWidget(self.group_label)
+        group_row.addWidget(self.group_combo, 1)
+        self.group_controls.setVisible(False)
 
         scroll = QScrollArea()
         self.actuator_scroll = scroll
@@ -5318,6 +5915,7 @@ class DashboardWindow(QMainWindow):
 
         scroll.setWidget(grid_host)
         layout.addLayout(header)
+        layout.addWidget(self.group_controls)
         layout.addWidget(scroll, 1)
         return panel
 
@@ -5325,7 +5923,7 @@ class DashboardWindow(QMainWindow):
         controls = QFrame()
         controls.setObjectName("ControlsPanel")
         controls.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        controls.setMaximumWidth(285)
+        controls.setMaximumWidth(190)
         layout = QVBoxLayout(controls)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -5351,7 +5949,7 @@ class DashboardWindow(QMainWindow):
         ):
             button.setObjectName("ToolButton")
             button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            button.setMaximumWidth(255)
+            button.setMaximumWidth(160)
             button.setFixedHeight(40)
             layout.addWidget(button)
         layout.addStretch()
@@ -6013,8 +6611,8 @@ class DashboardWindow(QMainWindow):
             self.actuator_tools_panel.sizeHint().height(),
             self.board_tools_panel.sizeHint().height(),
         )
-        for tool_panel in (self.actuator_tools_panel, self.board_tools_panel):
-            tool_panel.setFixedSize(285, common_tool_height)
+        self.actuator_tools_panel.setFixedSize(190, common_tool_height)
+        self.board_tools_panel.setFixedSize(380, common_tool_height)
         self.tool_sections.addWidget(self.actuator_tools_panel, 1, Qt.AlignTop)
         self.tool_sections.addWidget(self.board_tools_panel, 1, Qt.AlignTop)
         self.tool_sections.addStretch()
@@ -6044,7 +6642,7 @@ class DashboardWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("ControlsPanel")
         panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        panel.setMaximumWidth(285)
+        panel.setMaximumWidth(380)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -6065,22 +6663,35 @@ class DashboardWindow(QMainWindow):
         self.board_terminal_btn = QPushButton("Board Terminal")
         self.firmware_update_btn = QPushButton("Update Firmware")
         self.factory_reset_btn = QPushButton("Factory Reset")
-        for button in (
+        first_column = (
             self.board_settings_btn,
             self.bluetooth_config_btn,
             self.wifi_config_btn,
             self.network_config_btn,
             self.security_config_btn,
+        )
+        second_column = (
             self.fluid_mesh_btn,
             self.board_terminal_btn,
             self.firmware_update_btn,
             self.factory_reset_btn,
-        ):
+        )
+        self.board_tools_grid = QGridLayout()
+        self.board_tools_grid.setContentsMargins(0, 0, 0, 0)
+        self.board_tools_grid.setHorizontalSpacing(8)
+        self.board_tools_grid.setVerticalSpacing(8)
+        for column, buttons in enumerate((first_column, second_column)):
+            for row, button in enumerate(buttons):
+                self.board_tools_grid.addWidget(button, row, column)
+        self.board_tools_grid.setColumnStretch(0, 1)
+        self.board_tools_grid.setColumnStretch(1, 1)
+        for button in (*first_column, *second_column):
             button.setObjectName("ToolButton")
-            button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            button.setMaximumWidth(255)
+            button.setProperty("compact", True)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setMinimumWidth(0)
             button.setFixedHeight(40)
-            layout.addWidget(button)
+        layout.addLayout(self.board_tools_grid)
         layout.addStretch()
 
         self.board_settings_btn.clicked.connect(self._show_board_settings)
@@ -6531,6 +7142,44 @@ class DashboardWindow(QMainWindow):
         if self._connection_dialog is dialog:
             self._connection_dialog = None
 
+    def _show_connection_profile(self) -> None:
+        if not self._connected:
+            return
+        self.connection_profile_btn.setEnabled(False)
+        self.connection_profile_btn.setText("Loading…")
+        self.worker.enqueue("read_connection_profiles")
+
+    def _on_connection_profiles_ready(
+        self, choices: list[dict[str, Any]]
+    ) -> None:
+        self.connection_profile_btn.setText("Save Connection")
+        self.connection_profile_btn.setEnabled(self._connected)
+        if not self._connected:
+            return
+        if self._connection_profile_dialog is not None:
+            self._connection_profile_dialog.close()
+        dialog = ConnectionProfileDialog(choices, self)
+        self._connection_profile_dialog = dialog
+        dialog.finished.connect(
+            lambda _result: self._clear_connection_profile_dialog(dialog)
+        )
+        dialog.show()
+
+    def _clear_connection_profile_dialog(
+        self, dialog: ConnectionProfileDialog
+    ) -> None:
+        if self._connection_profile_dialog is dialog:
+            self._connection_profile_dialog = None
+
+    def _on_connection_profiles_failed(self, message: str) -> None:
+        self.connection_profile_btn.setText("Save Connection")
+        self.connection_profile_btn.setEnabled(self._connected)
+        QMessageBox.warning(
+            self,
+            "Connection Profile",
+            f"Could not read the controller connection settings: {message}",
+        )
+
     def _request_connection(self, endpoint: str, options: dict[str, Any]) -> None:
         self._active_endpoint = endpoint
         connection_options = dict(options)
@@ -6559,8 +7208,15 @@ class DashboardWindow(QMainWindow):
             self._on_capabilities_ready(self._capabilities)
         self.disconnect_btn.setEnabled(connected)
         self.disconnect_btn.setVisible(connected)
+        self.connection_profile_btn.setEnabled(connected)
+        self.connection_profile_btn.setVisible(connected)
         self.connect_btn.setEnabled(not connected)
+        self.connect_btn.setVisible(not connected)
+        self.connection_hint.setVisible(not connected)
         if not connected:
+            self.connection_profile_btn.setText("Save Connection")
+            if self._connection_profile_dialog is not None:
+                self._connection_profile_dialog.close()
             if self._board_settings_dialog is not None:
                 self._board_settings_dialog.close()
             if self._bluetooth_config_dialog is not None:
@@ -6728,6 +7384,7 @@ class DashboardWindow(QMainWindow):
         self.group_combo.setCurrentIndex(0)
         self.group_combo.blockSignals(False)
         show_groups = group_count > 1
+        self.group_controls.setVisible(show_groups)
         self.group_label.setVisible(show_groups)
         self.group_combo.setVisible(show_groups)
         self._selected_actuator = 0
@@ -6749,6 +7406,7 @@ class DashboardWindow(QMainWindow):
         self.group_combo.blockSignals(False)
         self.group_label.hide()
         self.group_combo.hide()
+        self.group_controls.hide()
 
     def _on_busy_changed(self, text: str) -> None:
         # Connection state is intentionally the only status displayed in the
@@ -7301,6 +7959,14 @@ QDialog#ConnectionDialog {
     background: #f7f7fc;
     color: #1a1b1f;
 }
+QDialog#ConnectionDialog QLabel#SerialDetailValue {
+    color: #344454;
+    background: transparent;
+    border: none;
+}
+QDialog#ConnectionDialog QLabel#SerialDetailValue:disabled {
+    color: #7a8797;
+}
 QDialog#ToolDialog {
     background: #f7f7fc;
     color: #1a1b1f;
@@ -7490,6 +8156,10 @@ QFrame#ActuatorCard[selected="true"] {
 QPushButton#ToolButton {
     text-align: left;
     padding: 9px 12px;
+}
+QPushButton#ToolButton[compact="true"] {
+    font-size: 11px;
+    padding: 9px 8px;
 }
 QLabel#ActuatorNumber {
     color: #1a1b1f;

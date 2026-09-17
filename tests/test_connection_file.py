@@ -73,6 +73,28 @@ def test_tls_connection_profile_can_disable_hostname_verification(
     assert "verify_hostname: false" in path.read_text(encoding="utf-8")
 
 
+def test_tls_connection_profile_can_disable_certificate_verification(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "trusted-network.connection.yaml"
+    profile = ConnectionProfile(
+        transport="tls",
+        host="192.168.24.1",
+        port=49765,
+        tls_verify_certificate=False,
+        tls_verify_hostname=False,
+    )
+
+    profile.save(path)
+    loaded = load_connection_file(path)
+
+    assert loaded.board_options() == {
+        "tls_verify_certificate": False,
+        "tls_check_hostname": False,
+    }
+    assert "verify_certificate: false" in profile.to_yaml()
+
+
 def test_sdk_opens_board_directly_from_connection_file(tmp_path: Path) -> None:
     path = tmp_path / "board.yaml"
     ConnectionProfile(

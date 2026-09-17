@@ -4,7 +4,7 @@ This note exists so a future Codex session can continue the Lansing firmware and
 
 ## 2026-09 SDK 0.2.4 Detection Semantics
 
-- Default minimum DT0 detection delta is `0.05 mA`.
+- The Lansing minimum DT0 detection delta is `0.10 mA`.
 - Only DT0 assigns `Not connected`. DT1, diagnosis, and post-initialization
   classification preserve DT0 presence and return only `Ready` or `Error`.
 
@@ -187,7 +187,7 @@ Detection procedure:
 
 Detection thresholds:
 
-- DT0 delta `< 0.05 mA`: `Not connected`
+- Lansing DT0 delta `< 0.10 mA`: `Not connected`
 - delta `>= 3.0 mA`: `Error`
 - otherwise: `Ready`
 

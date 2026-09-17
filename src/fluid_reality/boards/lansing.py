@@ -15,7 +15,7 @@ class Lansing(Board):
     """Twenty-four-channel Lansing board."""
 
     actuator_count = 24
-    not_connected_delta_ma = 0.05
+    not_connected_delta_ma = 0.10
 
 
 __all__ = [

@@ -45,6 +45,7 @@ class ConnectionProfile:
     tls_certificate_file: str | None = None
     tls_server_hostname: str | None = None
     tls_verify_hostname: bool = True
+    tls_verify_certificate: bool = True
 
     def __post_init__(self) -> None:
         transport = self.transport.strip().lower()
@@ -67,6 +68,7 @@ class ConnectionProfile:
             raise ValueError("use either embedded TLS certificate or certificate_file")
         if transport != "tls" and (
             any((self.tls_certificate, self.tls_certificate_file, self.tls_server_hostname))
+            or not self.tls_verify_certificate
             or not self.tls_verify_hostname
         ):
             raise ValueError("TLS certificate options require transport: tls")
@@ -103,6 +105,8 @@ class ConnectionProfile:
                 options["tls_ca_file"] = str(certificate_path)
             if self.tls_server_hostname:
                 options["tls_server_hostname"] = self.tls_server_hostname
+            if not self.tls_verify_certificate:
+                options["tls_verify_certificate"] = False
             if not self.tls_verify_hostname:
                 options["tls_check_hostname"] = False
         return options
@@ -114,7 +118,9 @@ class ConnectionProfile:
             "transport": self.transport,
         }
         if self.transport == "serial":
-            data.update(serial_port=self.serial_port, baudrate=self.baudrate)
+            data["serial_port"] = self.serial_port
+            if self.baudrate != 250000:
+                data["baudrate"] = self.baudrate
         elif self.transport == "bluetooth":
             data.update(device=self.bluetooth_device, pair=self.bluetooth_pair)
         else:
@@ -129,23 +135,27 @@ class ConnectionProfile:
                 tls["certificate_file"] = self.tls_certificate_file
             if self.tls_server_hostname:
                 tls["server_hostname"] = self.tls_server_hostname
+            if not self.tls_verify_certificate:
+                tls["verify_certificate"] = False
             if not self.tls_verify_hostname:
                 tls["verify_hostname"] = False
             data["tls"] = tls
         return data
 
+    def to_yaml(self) -> str:
+        """Serialize this profile as a portable connection-file string."""
+
+        return yaml.dump(
+            self.to_mapping(),
+            Dumper=_ConnectionDumper,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
     def save(self, path: str | Path) -> Path:
         destination = Path(path).expanduser()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(
-            yaml.dump(
-                self.to_mapping(),
-                Dumper=_ConnectionDumper,
-                sort_keys=False,
-                allow_unicode=True,
-            ),
-            encoding="utf-8",
-        )
+        destination.write_text(self.to_yaml(), encoding="utf-8")
         return destination
 
     @classmethod
@@ -183,6 +193,7 @@ class ConnectionProfile:
             tls_server_hostname=(
                 None if tls.get("server_hostname") is None else str(tls["server_hostname"])
             ),
+            tls_verify_certificate=bool(tls.get("verify_certificate", True)),
             tls_verify_hostname=bool(tls.get("verify_hostname", True)),
         )
 

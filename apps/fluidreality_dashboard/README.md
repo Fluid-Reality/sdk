@@ -18,6 +18,7 @@ data and may differ slightly from the values reported by your hardware.
 
 - [Install and run](#install-and-run)
 - [Connect to a controller](#connect-to-a-controller)
+- [Create a connection profile](#create-a-connection-profile)
 - [Dashboard tour](#dashboard-tour)
 - [Detect and select actuators](#detect-and-select-actuators)
 - [Actuator tools](#actuator-tools)
@@ -92,6 +93,12 @@ by default on a new controller.
    button if the port was connected after opening the dialog.
 4. Select **OK**.
 
+The dropdown shows only serial-port names, sorted in natural numeric order
+(`COM2` before `COM10`). Selecting a port displays its device description,
+manufacturer, serial number, and USB ID in the **Selected device** panel below.
+Bluetooth COM aliases are handled by the Bluetooth tab and do not appear in the
+serial list.
+
 The serial-port name varies by operating system. Windows commonly uses `COM23`;
 Linux commonly uses `/dev/ttyACM0` or `/dev/ttyUSB0`; macOS commonly uses a
 `/dev/cu.*` device.
@@ -138,6 +145,41 @@ provides it. If a previously paired computer can no longer connect after
 security settings change, forget the pairing on both the computer and the
 controller, then pair again.
 
+## Create a Connection Profile
+
+After connecting, select **Save Connection** beside the connection status.
+The Dashboard reads the controller configuration and offers Serial plus each
+optional connection method that the controller currently supports and has
+enabled. Bluetooth appears only when Bluetooth is enabled. TCP and TLS appear
+only when their corresponding network service is enabled.
+
+![Create a reusable connection profile](docs/images/04a_connection_profile.png)
+
+Choose a connection method, review the populated settings, and then either:
+
+- Select **Copy string** to copy an endpoint such as `COM17`,
+  `ble://FR-Rockford-A1`, `tcp://10.0.6.143:49765`, or
+  `tls://10.0.6.143:49765`.
+- Select **Copy file text** to copy the complete YAML profile.
+- Select **Save connection file…** to save a profile that includes the endpoint
+  and any required pairing, access-token, or TLS client settings.
+
+Changing fields in this window changes only the generated connection string or
+file. It does not change the controller's Bluetooth, network, or security
+configuration.
+
+When the Dashboard is connected through a non-serial method, enter the desired
+serial-port name before creating a Serial profile. Treat connection files that
+contain an access token as credentials and store them accordingly.
+
+Use a saved file directly from the SDK:
+
+```python
+from fluid_reality import Rockford
+
+board = Rockford.from_connection_file("rockford.connection.yaml")
+```
+
 ## Dashboard Tour
 
 After connection, the Dashboard presents the complete controller workflow in
@@ -147,14 +189,14 @@ one window.
 
 | Area | Purpose |
 |---|---|
-| **Board connection** | Shows the connected firmware and endpoint. **Disconnect** closes the transport without changing physical wiring. |
+| **Board connection** | Shows the connected firmware and endpoint. **Save Connection** creates a reusable endpoint or connection file. **Disconnect** closes the transport without changing physical wiring. |
 | **Power** | Turns the controller power supply and actuator output path on or off. |
 | **Voltage** | Shows the measured controller supply voltage. |
 | **Current** | Shows the measured total controller current in milliamps. |
 | **Actuators** | Shows actuator number, detection state, and measured current delta. Select a card before opening an actuator tool. |
 | **Redetect** | The circular-arrow button detects the visible actuator group again. |
 | **Actuator Tools** | Opens Initialize, Fast Init, Diagnose, Recover, and Square Wave for the selected actuator. |
-| **Board Tools** | Opens hardware and communication configuration supported by the connected firmware. |
+| **Board Tools** | Opens hardware and communication configuration supported by the connected firmware. Tools use two compact columns to keep the Dashboard narrow. |
 | **Event Log** | Records connections, detection results, operations, firmware responses, and errors. |
 
 ### Power And Telemetry
@@ -187,7 +229,8 @@ selecting an actuator or starting a tool.
 
 Rockford exposes channels `0` through `7`. Its five built-in ports are channels
 `0` through `4`; the optional three-actuator expansion card adds physical ports
-for channels `5` through `7`. Lansing displays its channels in groups of eight.
+for channels `5` through `7`. Lansing displays its channels in groups of eight;
+the **Group** selector appears on its own row below the actuator heading.
 
 ### Actuator States
 
@@ -323,9 +366,11 @@ the test before closing the window or disconnecting hardware.
 ## Board Tools
 
 Board Tools are enabled according to firmware capabilities and connection type.
-The serial view below illustrates a controller for which every implemented tool
-is available. Factory Reset is USB-only; firmware update is unavailable over
-Bluetooth; Fluid Mesh appears only when firmware reports support.
+The compact two-column layout keeps all tools visible without increasing the
+Dashboard width. The serial view below illustrates a controller for which every
+implemented tool except Fluid Mesh is available. Factory Reset is USB-only;
+firmware update is unavailable over Bluetooth; Fluid Mesh becomes available
+only when firmware reports support.
 
 ![Capability-dependent Board Tools](docs/images/21_capability_dependent_tools.png)
 

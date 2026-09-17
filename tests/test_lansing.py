@@ -555,7 +555,7 @@ def test_lansing_detect_marks_actuator_ready(monkeypatch):
 
 
 def test_lansing_detect_marks_actuator_not_connected(monkeypatch):
-    transport = FakeTransport(detection_responses(1.0, 1.04, None))
+    transport = FakeTransport(detection_responses(1.0, 1.08, None))
     board = Lansing(transport=transport)
     sleeps = []
     monkeypatch.setattr("fluid_reality.boards.board.time.sleep", sleeps.append)
