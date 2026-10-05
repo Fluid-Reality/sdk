@@ -339,6 +339,12 @@ See [apps/fluidreality_terminal/README.md](apps/fluidreality_terminal/README.md)
 installation, the complete command reference, JSON schemas, automation options,
 and platform-specific usage instructions.
 
+## Glove Demo
+
+The [Fluid Reality Glove Demo](apps/glove_demo/README.md) maps five glove
+fingers to controller actuators and visualizes five activation patterns. It
+identifies Lansing or Rockford automatically from a selected serial port.
+
 ## Examples
 
 Example scripts are available in [examples](examples). Board examples accept a
@@ -384,3 +390,5 @@ Use `python <example> --help` for each example's complete options.
 - [13_vt_budget.py](examples/13_vt_budget.py):
   inspect Rockford's VT budget and require explicit risk confirmation before a
   persistent change.
+- [14_hold_actuators_3_4.py](examples/14_hold_actuators_3_4.py):
+  command actuators 3 and 4 to full output until interrupted, then power down.

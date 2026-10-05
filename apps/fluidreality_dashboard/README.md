@@ -46,10 +46,10 @@ using those transports.
 
 ## Install And Run
 
-Use Python 3.10 or newer. From a cloned SDK checkout on Windows:
+Use Python 3.10 or newer. Open a terminal in the root of your cloned SDK
+checkout. On Windows, run:
 
 ```powershell
-cd C:\research\FluidReality\sdk
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -58,10 +58,9 @@ python -m pip install -r apps\fluidreality_dashboard\requirements.txt
 python apps\fluidreality_dashboard\app.py
 ```
 
-On macOS or Linux:
+On macOS or Linux, from that same repository root:
 
 ```bash
-cd /path/to/sdk
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
