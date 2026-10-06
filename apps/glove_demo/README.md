@@ -7,8 +7,9 @@ negative output. Color intensity follows the output level.
 
 ![Glove Demo, disconnected](blueprint_preview.png)
 
-The [color preview](blueprint_color_preview.png) uses simulated levels. Neither
-preview connected to or powered a board.
+The [color preview](blueprint_color_preview.png) uses simulated levels. The
+[detection preview](blueprint_detection_preview.png) uses simulated detection
+states. None of these previews connected to or powered a board.
 
 ## Requirements
 
@@ -41,7 +42,9 @@ Launching the window alone does not open a board or apply output.
    instead of guessing a profile.
 3. On connection, the app checks actuator readiness once. This briefly powers
    the board for detection, then powers it off. It checks every channel on the
-   identified board, so the first connection can take some time. Detection may
+   identified board, so the first connection can take some time. A mapped
+   finger's circle turns gold while its actuator is being checked, whitish when
+   `Ready`, gray when `Not connected`, or reddish on `Error`. Detection may
    energize actuators; keep the glove clear while connecting.
 4. Assign an actuator number to each finger, choose a pattern, and click
    **Run Demo**. The default mapping is pinky `0`, ring `1`, middle `2`, index
@@ -50,6 +53,11 @@ Launching the window alone does not open a board or apply output.
 5. Click **Stop Demo** to end the pattern. Mappings, pattern, and connection
    controls are locked while the demo runs. The connection remains available
    for another run after output cleanup finishes.
+
+Patterns use only mapped actuators that are `Ready`; missing or failed channels
+remain inactive. Wave patterns skip finger positions mapped to those channels.
+The demo can run with fewer than five detected actuators, including repeated
+finger mappings. If no mapped finger is `Ready`, **Run Demo** stays disabled.
 
 The app uses the startup readiness result on later runs rather than repeating
 actuator detection each time. If hardware changes after connecting, disconnect
@@ -61,27 +69,40 @@ and reconnect to detect it again.
 | --- | --- |
 | Pulse | All mapped outputs ramp from `0` to `+255` over 0.5 s, hold `-255` for 0.25 s, then rest at `0` for 0.25 s. The ideal signed output-time balances each cycle. |
 | Snap | All mapped outputs ramp from `+255` to `-255` over 1 s, then repeat. |
-| Slow Wave | Each finger position receives `+255` for 1 s in pinky-to-thumb order; firmware discharge finishes before the next finger. |
-| Fast Wave | The same sequence with a 0.25 s positive phase per finger, followed by discharge. |
+| Slow Wave | Each ready finger receives `+255` for 1 s in pinky-to-thumb order. The next finger starts after 0.75 s, overlapping the previous activation by 0.25 s. |
+| Fast Wave | Each ready finger receives `+255` for 0.25 s. The next starts after 0.1875 s, overlapping the previous activation by 0.0625 s. |
 | Square Wave | All mapped outputs alternate `+255` for 0.5 s and `-255` for 0.5 s. |
 
-Red and blue show signed activation at the fingertip; a darker marker means a
-lower magnitude. The wave modes use the board's reported output during
-discharge when available. Bipolar outputs are commanded to the five physical
+During a pattern, red and blue show signed activation at the fingertip; color
+strength follows magnitude. When output returns to zero, the circle returns
+to its detection-state color. During a wave, blue represents the expected
+firmware discharge interval; the app checks the actual discharge state when
+stopping. Bipolar outputs are commanded to the physical
 channels sequentially, so their transitions are approximately synchronized,
 not simultaneous. Serial latency can affect timing.
 
+Wave scheduling visits each distinct ready actuator once per pass, in finger
+order. Fingers sharing an actuator light together; that physical channel is
+not retriggered or held on longer and must finish discharging before its next
+pulse. With only one or two distinct ready actuators, firmware discharge
+lockout prevents uninterrupted 25% overlap on every transition at these hold
+times. Those patterns still run, but some repeat pulses are skipped rather
+than overriding discharge.
+
 ## Safety and shutdown
 
-- The app refuses to start a pattern if any mapped actuator was not `Ready` at
-  connection time, or if the supply voltage is zero.
+- The app drives only mapped actuators that were `Ready` at connection time.
+  It refuses to start if none are ready or if the supply voltage is zero.
 - Pulse, Snap, and Square Wave use manual positive/negative output. They
   temporarily disable firmware `SAFE` and restore its previous setting on
   cleanup. The app limits accumulated signed output-time and compensates on
   stop, but this is **not** a measurement of electrode charge or a guarantee
   of safe exposure. Supervise hardware use.
-- Slow Wave and Fast Wave retain firmware safety and wait for firmware-managed
-  discharge. Firmware limits may shorten a requested active interval.
+- Slow Wave and Fast Wave retain firmware safety. Finger activations may overlap,
+  while discharge continues in the background. The scheduler avoids polling
+  the multi-line board status during the wave, then waits for all driven
+  channels to finish firmware-managed discharge on stop. Firmware limits may
+  shorten a requested active interval.
 - Stopping, disconnecting, or closing clears output and powers the board off.
   Closing the window waits for cleanup rather than abandoning a running worker.
 
@@ -94,8 +115,9 @@ not simultaneous. Serial latency can affect timing.
 - **Unsupported board firmware:** the `VER` response must identify `Lansing` or
   `Rockford`. The app will not choose one based on the port name.
 - **Supply voltage is 0 V:** check the controller's external power adapter.
-- **Actuator not Ready:** inspect the glove connection, then disconnect and
-  reconnect to run detection again.
+- **Actuator not Ready:** that channel is skipped, but other ready channels can
+  still run. Inspect the glove connection, then disconnect and reconnect to
+  run detection again.
 
 ## Files and tests
 

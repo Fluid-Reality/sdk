@@ -9,6 +9,8 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget
 
+from fluid_reality import ActuatorState
+
 
 TIP_COORDS = ((57, 258), (110, 143), (214, 67), (352, 90), (462, 255))
 ASSET = Path(__file__).resolve().parent / "assets" / "hand_outline.svg"
@@ -25,6 +27,7 @@ class HandView(QWidget):
             raise RuntimeError(f"Unable to load hand artwork: {ASSET}")
         self._actuators = list(range(5))
         self._values: dict[int, float] = {}
+        self._detection_states: dict[int, ActuatorState | str] = {}
 
     def set_actuators(self, actuators: list[int]) -> None:
         self._actuators = list(actuators)
@@ -32,6 +35,14 @@ class HandView(QWidget):
 
     def set_values(self, values: dict[int, float]) -> None:
         self._values = dict(values)
+        self.update()
+
+    def set_detection_state(self, actuator: int, state: ActuatorState | str) -> None:
+        self._detection_states[actuator] = state
+        self.update()
+
+    def clear_detection_states(self) -> None:
+        self._detection_states.clear()
         self.update()
 
     @staticmethod
@@ -44,17 +55,34 @@ class HandView(QWidget):
         )
 
     @classmethod
-    def _activation_style(cls, value: float) -> tuple[QColor, QColor, QColor, float]:
+    def _activation_style(
+        cls,
+        value: float,
+        base_fill: QColor | None = None,
+        base_outline: QColor | None = None,
+    ) -> tuple[QColor, QColor, QColor, float]:
         intensity = min(1.0, abs(value) / 255.0)
         active = QColor("#ff4d45") if value > 0 else QColor("#42a5ff")
-        neutral_fill = QColor("#173b53")
-        neutral_outline = QColor("#50a6bd")
+        neutral_fill = base_fill if base_fill is not None else QColor("#173b53")
+        neutral_outline = base_outline if base_outline is not None else QColor("#50a6bd")
         return (
             cls._mix(neutral_fill, active, intensity),
             cls._mix(neutral_outline, active, intensity),
             active,
             intensity,
         )
+
+    @staticmethod
+    def _detection_style(state: ActuatorState | str) -> tuple[QColor, QColor]:
+        if state == "Detecting" or state == ActuatorState.PRESENT:
+            return QColor("#e1aa51"), QColor("#ffe0a3")
+        if state == ActuatorState.READY:
+            return QColor("#e9f5f7"), QColor("#b8e9f0")
+        if state == ActuatorState.NOT_CONNECTED:
+            return QColor("#687684"), QColor("#a2afba")
+        if state == ActuatorState.ERROR:
+            return QColor("#ad4f58"), QColor("#ff9ca5")
+        return QColor("#173b53"), QColor("#50a6bd")
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
@@ -87,18 +115,23 @@ class HandView(QWidget):
         for finger, (tx, ty) in enumerate(TIP_COORDS):
             number = self._actuators[finger]
             value = self._values.get(number, 0.0)
-            fill, outline, active, intensity = self._activation_style(value)
+            state = self._detection_states.get(number, ActuatorState.UNKNOWN)
+            base_fill, base_outline = self._detection_style(state)
+            fill, outline, active, intensity = self._activation_style(
+                value, base_fill, base_outline
+            )
             x, y = left + tx * scale, top + ty * scale
-            if intensity > 0:
-                halo = QColor(active)
-                halo.setAlpha(round(80 * intensity))
+            if intensity > 0 or state == "Detecting":
+                halo = QColor(active if intensity > 0 else base_fill)
+                halo.setAlpha(round(80 * intensity) if intensity > 0 else 65)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(halo)
                 painter.drawEllipse(QRectF(x - 34, y - 34, 68, 68))
             painter.setPen(QPen(outline, 2))
             painter.setBrush(fill)
             painter.drawEllipse(QRectF(x - 24, y - 24, 48, 48))
-            painter.setPen(QColor("#ffffff") if intensity > 0.42 else QColor("#a4d7e3"))
+            luminance = 0.2126 * fill.red() + 0.7152 * fill.green() + 0.0722 * fill.blue()
+            painter.setPen(QColor("#102b42") if luminance > 170 else QColor("#ffffff"))
             painter.drawText(QRectF(x - 23, y - 22, 46, 44), Qt.AlignmentFlag.AlignCenter, str(number))
 
         painter.setPen(QColor("#80bfcc"))

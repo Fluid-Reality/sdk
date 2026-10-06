@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from fluid_reality import list_ports
+from fluid_reality import ActuatorState, list_ports
 if __package__:
     from .hand_view import HandView
     from .worker import BoardThread, DemoConfig, FINGER_NAMES, PATTERNS
@@ -98,6 +98,7 @@ class GloveDemo(QMainWindow):
         self._worker: BoardThread | None = None
         self._connected = False
         self._close_requested = False
+        self._detected_states: dict[int, ActuatorState | str] = {}
         root = QWidget()
         root.setObjectName("Root")
         layout = QVBoxLayout(root)
@@ -152,6 +153,11 @@ class GloveDemo(QMainWindow):
         hint.setObjectName("Hint")
         side_layout.addWidget(heading)
         side_layout.addWidget(hint)
+        detection_legend = QLabel(
+            "GOLD CHECKING  /  WHITE READY\nGRAY MISSING  /  RED ERROR"
+        )
+        detection_legend.setObjectName("Hint")
+        side_layout.addWidget(detection_legend)
         side_layout.addSpacing(14)
         self.finger_boxes: list[QComboBox] = []
         for index, finger in enumerate(FINGER_NAMES):
@@ -185,6 +191,7 @@ class GloveDemo(QMainWindow):
         self.phase_label = QLabel("READY TO CONNECT")
         self.phase_label.setObjectName("Phase")
         side_layout.addWidget(self.phase_label)
+        self.pattern_box.currentIndexChanged.connect(self._update_run_availability)
         self.run_button = QPushButton("RUN DEMO")
         self.run_button.setObjectName("Run")
         self.run_button.setEnabled(False)
@@ -207,6 +214,42 @@ class GloveDemo(QMainWindow):
 
     def _mapping_changed(self) -> None:
         self.hand.set_actuators([box.currentIndex() for box in self.finger_boxes])
+        if self._connected and self.run_button.text() != "STOP DEMO":
+            self._update_run_availability()
+
+    def _ready_mapped_fingers(self) -> int:
+        return sum(
+            self._detected_states.get(box.currentIndex()) is ActuatorState.READY
+            for box in self.finger_boxes
+        )
+
+    def _update_run_availability(self) -> None:
+        ready = self._ready_mapped_fingers()
+        self.run_button.setEnabled(self._connected and ready > 0)
+        if self._connected:
+            distinct_ready = {
+                box.currentIndex()
+                for box in self.finger_boxes
+                if self._detected_states.get(box.currentIndex()) is ActuatorState.READY
+            }
+            if (
+                ready
+                and self.pattern_box.currentText() in ("Slow Wave", "Fast Wave")
+                and len(distinct_ready) < 3
+            ):
+                self.phase_label.setText(
+                    f"WAVE GAP / {len(distinct_ready)} READY; NEED 3 DISTINCT"
+                )
+            else:
+                self.phase_label.setText(
+                    f"READY / {ready} OF 5 FINGERS" if ready else "NO READY MAPPED FINGERS"
+                )
+
+    def _on_detection_changed(self, actuator: int, state: ActuatorState | str) -> None:
+        self._detected_states[actuator] = state
+        self.hand.set_detection_state(actuator, state)
+        if self._connected and self.run_button.text() != "STOP DEMO":
+            self._update_run_availability()
 
     def connect_board(self) -> None:
         if self._worker is not None:
@@ -219,6 +262,9 @@ class GloveDemo(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         endpoint = dialog.connection()
+        self._detected_states.clear()
+        self.hand.clear_detection_states()
+        self.hand.set_values({})
         self.port_label.setText(f"CONNECTING  {endpoint}")
         self.phase_label.setText("IDENTIFYING BOARD")
         self.connect_button.setEnabled(False)
@@ -227,6 +273,7 @@ class GloveDemo(QMainWindow):
         worker.connected.connect(self._connected_to_board)
         worker.failed.connect(self._worker_failed)
         worker.disconnected.connect(self._worker_disconnected)
+        worker.detection_changed.connect(self._on_detection_changed)
         worker.values_changed.connect(self.hand.set_values)
         worker.running_changed.connect(self._set_running)
         worker.phase_changed.connect(self.phase_label.setText)
@@ -240,8 +287,7 @@ class GloveDemo(QMainWindow):
         self.port_label.setText(f"{model.upper()}  /  {endpoint.upper()}")
         self.connect_button.setText("Disconnect")
         self.connect_button.setEnabled(True)
-        self.run_button.setEnabled(True)
-        self.phase_label.setText("READY")
+        self._update_run_availability()
 
     def _worker_failed(self, message: str) -> None:
         self._connected = False
@@ -254,7 +300,10 @@ class GloveDemo(QMainWindow):
 
     def _worker_disconnected(self) -> None:
         self._connected = False
+        self._detected_states.clear()
+        self.hand.clear_detection_states()
         self.hand.set_values({})
+        self.run_button.setEnabled(False)
 
     def _worker_finished(self) -> None:
         if self._worker is not None:
@@ -297,9 +346,10 @@ class GloveDemo(QMainWindow):
         self.pattern_box.setEnabled(not running)
         self.connect_button.setEnabled(not running and self._connected)
         self.run_button.setText("STOP DEMO" if running else "RUN DEMO")
-        self.run_button.setEnabled(self._connected)
-        if not running and self._connected:
-            self.phase_label.setText("READY")
+        if running:
+            self.run_button.setEnabled(self._connected)
+        else:
+            self._update_run_availability()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._worker is not None and self._worker.isRunning():

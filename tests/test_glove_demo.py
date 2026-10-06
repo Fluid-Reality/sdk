@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,7 @@ class FakeBoard:
         self.manual: dict[int, tuple[int, int]] = {}
         self.safety_state = True
         self.detect_state = ActuatorState.READY
+        self.detect_states: dict[int, ActuatorState] = {}
         self.discharge_readings = [100, 0]
         FakeBoard.instances.append(self)
 
@@ -44,7 +46,7 @@ class FakeBoard:
 
     def detect(self, actuator: int) -> ActuatorState:
         self.events.append(("detect", actuator))
-        return self.detect_state
+        return self.detect_states.get(actuator, self.detect_state)
 
     def safety(self, enabled: bool | None = None) -> bool:
         if enabled is not None:
@@ -83,15 +85,33 @@ def test_bipolar_cycles_have_zero_signed_area() -> None:
     assert pattern_values("Pulse", 0.9)[0] == 0
 
 
-def test_demo_refuses_cached_actuator_that_is_not_ready() -> None:
+def test_bipolar_demo_skips_mapped_actuators_that_are_not_ready() -> None:
     board = FakeBoard("fake")
     worker = ready_worker(board)
     worker._actuator_states[0] = ActuatorState.ERROR
-    with pytest.raises(RuntimeError, match="not started"):
-        worker._run_config(board, DemoConfig("Square Wave", (0, 1, 2, 3, 4)))
+    worker._actuator_states[1] = ActuatorState.NOT_CONNECTED
+
+    def one_short_pulse(board: FakeBoard, config: DemoConfig, channels) -> None:
+        assert set(channels) == {2, 3, 4}
+        worker._set_manual(board, 2, channels[2], 255)
+        worker.stop_demo()
+
+    worker._run_bipolar = one_short_pulse  # type: ignore[method-assign]
+    worker._run_config(board, DemoConfig("Square Wave", (0, 1, 2, 3, 4)))
     assert not any(event[0] == "detect" for event in board.events)
-    assert not any(event[0] in {"manual", "act"} for event in board.events)
+    assert not any(event[0] == "manual" and event[1] in {0, 1} for event in board.events)
+    assert ("manual", 2, 255, 0) in board.events
     assert board.events[-1] == ("power_off",)
+
+
+def test_demo_refuses_to_start_with_no_ready_mapped_actuators() -> None:
+    board = FakeBoard("fake")
+    worker = ready_worker(board)
+    worker._actuator_states = {actuator: ActuatorState.NOT_CONNECTED for actuator in range(5)}
+    config = DemoConfig("Pulse", (0, 1, 2, 3, 4))
+    with pytest.raises(RuntimeError, match="No mapped actuators are Ready"):
+        worker.start_demo(config)
+    assert not board.events
 
 
 def test_wave_waits_for_discharge_before_finishing() -> None:
@@ -107,6 +127,104 @@ def test_wave_waits_for_discharge_before_finishing() -> None:
     assert ("act", 0, 0) in board.events
     assert sum(event == ("status",) for event in board.events) == 2
     assert board.events.index(("act", 0, 0)) < board.events.index(("power_off",))
+
+
+def test_wave_skips_fingers_mapped_to_unready_actuators() -> None:
+    board = FakeBoard("fake")
+    worker = ready_worker(board)
+    worker._actuator_states[0] = ActuatorState.NOT_CONNECTED
+    worker._actuator_states[2] = ActuatorState.ERROR
+    stop = threading.Timer(0.01, worker.stop_demo)
+    stop.start()
+    try:
+        worker._run_config(board, DemoConfig("Fast Wave", (0, 1, 2, 3, 4)))
+    finally:
+        stop.join()
+    assert ("act", 1, 255) in board.events
+    assert not any(event[0] == "act" and event[1] in {0, 2} for event in board.events)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "hold_s"), [("Slow Wave", 1.0), ("Fast Wave", 0.25)]
+)
+@pytest.mark.parametrize(
+    ("mapping", "expected_order"),
+    [
+        ((0, 1, 2, 3, 4), [0, 1, 2, 3, 4] * 2 + [0]),
+        ((0, 0, 1, 2, 2), [0, 1, 2] * 3 + [0, 1]),
+    ],
+)
+def test_wave_overlap_continues_through_full_cycle_without_status_delays(
+    monkeypatch: pytest.MonkeyPatch,
+    pattern: str,
+    hold_s: float,
+    mapping: tuple[int, ...],
+    expected_order: list[int],
+) -> None:
+    class Clock:
+        now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def sleep(self, seconds: float) -> None:
+            self.now += seconds
+
+    class StopEvent:
+        stopped = False
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def set(self) -> None:
+            self.stopped = True
+
+        def clear(self) -> None:
+            self.stopped = False
+
+        def wait(self, seconds: float) -> bool:
+            if not self.stopped:
+                clock.sleep(seconds)
+            return self.stopped
+
+    clock = Clock()
+    monkeypatch.setattr(
+        worker_module, "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+    )
+    timeline: list[tuple[float, int, int]] = []
+
+    class TimedBoard(FakeBoard):
+        def set_actuator(self, actuator: int, value: int) -> None:
+            super().set_actuator(actuator, value)
+            timeline.append((clock.now, actuator, value))
+            if value == 255 and len([event for event in timeline if event[2] == 255]) == 11:
+                worker.stop_demo()
+
+        def status(self) -> dict[str, tuple[int, ...]]:
+            # STS is a multi-line serial response; it must not stall the wave.
+            clock.sleep(0.3)
+            return super().status()
+
+    board = TimedBoard("fake")
+    worker = ready_worker(board)
+    worker._stop = StopEvent()  # type: ignore[assignment]
+    worker._run_config(board, DemoConfig(pattern, mapping))
+
+    starts = [event for event in timeline if event[2] == 255]
+    first_off = next(event for event in timeline if event[1:] == (0, 0))
+    assert [event[1] for event in starts] == expected_order
+    assert all(
+        next_start[0] - start[0] == pytest.approx(hold_s * 0.75)
+        for start, next_start in zip(starts, starts[1:])
+    )
+    assert starts[1][0] < first_off[0]
+    assert first_off[0] - starts[0][0] == pytest.approx(hold_s)
+    assert board.events.index(("status",)) > max(
+        index for index, event in enumerate(board.events) if event == ("act", 0, 255)
+    )
+    assert all(("act", actuator, 0) in board.events for actuator in set(mapping))
+    assert board.events[-1] == ("power_off",)
 
 
 def test_manual_output_is_balanced_and_previous_safety_restored() -> None:
@@ -213,9 +331,19 @@ def test_connection_dialog_only_requests_serial_port(monkeypatch: pytest.MonkeyP
 
 def test_worker_detects_actuators_once_at_startup() -> None:
     board = FakeBoard("fake")
+    board.detect_states = {1: ActuatorState.NOT_CONNECTED, 2: ActuatorState.ERROR}
     worker = BoardThread("fake", FakeBoard)
+    progress: list[tuple[int, ActuatorState | str]] = []
+    worker.detection_changed.connect(lambda actuator, state: progress.append((actuator, state)))
     worker._detect_actuators_at_startup(board)
-    assert worker._actuator_states == {actuator: ActuatorState.READY for actuator in range(8)}
+    assert worker._actuator_states[0] is ActuatorState.READY
+    assert worker._actuator_states[1] is ActuatorState.NOT_CONNECTED
+    assert worker._actuator_states[2] is ActuatorState.ERROR
+    assert progress[:6] == [
+        (0, "Detecting"), (0, ActuatorState.READY),
+        (1, "Detecting"), (1, ActuatorState.NOT_CONNECTED),
+        (2, "Detecting"), (2, ActuatorState.ERROR),
+    ]
     assert sum(event[0] == "detect" for event in board.events) == 8
 
     stop = threading.Timer(0.01, worker.stop_demo)
@@ -225,6 +353,23 @@ def test_worker_detects_actuators_once_at_startup() -> None:
     finally:
         stop.join()
     assert sum(event[0] == "detect" for event in board.events) == 8
+
+
+def test_detection_exception_marks_finger_as_error_before_shutdown() -> None:
+    class FailingBoard(FakeBoard):
+        def detect(self, actuator: int) -> ActuatorState:
+            if actuator == 2:
+                raise RuntimeError("Detection command failed")
+            return super().detect(actuator)
+
+    board = FailingBoard("fake")
+    worker = BoardThread("fake", FailingBoard)
+    progress: list[tuple[int, ActuatorState | str]] = []
+    worker.detection_changed.connect(lambda actuator, state: progress.append((actuator, state)))
+    with pytest.raises(RuntimeError, match="Detection command failed"):
+        worker._detect_actuators_at_startup(board)
+    assert progress[-2:] == [(2, "Detecting"), (2, ActuatorState.ERROR)]
+    assert board.events[-1] == ("power_off",)
 
 
 def test_gui_mapping_can_repeat_and_locks_during_demo() -> None:
@@ -255,6 +400,36 @@ def test_hand_view_colors_follow_signed_activation() -> None:
     assert positive_fill.red() > positive_fill.blue()
     assert negative_fill.blue() > negative_fill.red()
     assert neutral_fill.name() == "#173b53"
+
+
+def test_detection_colors_and_ready_mapping_in_gui() -> None:
+    application = QApplication.instance() or QApplication([])
+    window = GloveDemo()
+    window._on_detection_changed(0, "Detecting")
+    window._on_detection_changed(0, ActuatorState.READY)
+    window._on_detection_changed(1, ActuatorState.NOT_CONNECTED)
+    window._on_detection_changed(2, ActuatorState.ERROR)
+    window._connected_to_board("COM9", "Rockford")
+
+    detecting, _ = HandView._detection_style("Detecting")
+    ready, _ = HandView._detection_style(ActuatorState.READY)
+    missing, _ = HandView._detection_style(ActuatorState.NOT_CONNECTED)
+    failed, _ = HandView._detection_style(ActuatorState.ERROR)
+    assert detecting.red() > detecting.blue()
+    assert ready.red() > 220 and ready.green() > 220 and ready.blue() > 220
+    assert abs(missing.red() - missing.blue()) < 35
+    assert failed.red() > failed.green()
+    assert window.run_button.isEnabled()
+    assert window.phase_label.text() == "READY / 1 OF 5 FINGERS"
+    window.pattern_box.setCurrentText("Fast Wave")
+    assert window.phase_label.text() == "WAVE GAP / 1 READY; NEED 3 DISTINCT"
+
+    window.finger_boxes[0].setCurrentIndex(1)
+    assert not window.run_button.isEnabled()
+    window.finger_boxes[1].setCurrentIndex(0)
+    assert window.run_button.isEnabled()
+    window.close()
+    application.processEvents()
 
 
 def test_bipolar_demo_starts_without_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:

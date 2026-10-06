@@ -62,6 +62,7 @@ class BoardThread(QThread):
     connected = Signal(str, str)
     disconnected = Signal()
     failed = Signal(str)
+    detection_changed = Signal(int, object)
     values_changed = Signal(object)
     running_changed = Signal(bool)
     phase_changed = Signal(str)
@@ -88,6 +89,8 @@ class BoardThread(QThread):
         with self._lock:
             if self._running or self._pending is not None or self._disconnect.is_set():
                 raise RuntimeError("A demo is already starting or running")
+            if not self._ready_fingers(config):
+                raise RuntimeError("No mapped actuators are Ready")
             self._pending = config
         self._stop.clear()
         self._wake.set()
@@ -135,6 +138,8 @@ class BoardThread(QThread):
             self.phase_changed.emit("IDENTIFYING BOARD")
             board = self._open_board()
             self._detect_actuators_at_startup(board)
+            if self._disconnect.is_set():
+                return
             self.connected.emit(self._endpoint, type(board).__name__)
             while not self._disconnect.is_set():
                 with self._lock:
@@ -170,24 +175,23 @@ class BoardThread(QThread):
             self.disconnected.emit()
 
     def _run_config(self, board, config: DemoConfig) -> None:
-        unique = tuple(sorted(set(config.actuators)))
+        ready_fingers = self._ready_fingers(config)
+        unique = tuple(sorted({config.actuators[finger] for finger in ready_fingers}))
         channels: dict[int, _Channel] | None = None
         previous_safety: bool | None = None
         try:
             if self._stop.is_set() or self._disconnect.is_set():
                 return
+            if not unique:
+                raise RuntimeError("No mapped actuators are Ready; demo not started")
             self.phase_changed.emit("POWERING ON")
             board.power_on()
             self._check_voltage(board)
-            for actuator in unique:
-                state = self._actuator_states.get(actuator, ActuatorState.UNKNOWN)
-                if state is not ActuatorState.READY:
-                    raise RuntimeError(f"Actuator {actuator} is {state.value}; demo not started")
             if self._stop.is_set():
                 return
 
             if config.pattern in ("Slow Wave", "Fast Wave"):
-                self._run_wave(board, config)
+                self._run_wave(board, config, ready_fingers)
             else:
                 previous_safety = board.safety()
                 if previous_safety:
@@ -219,60 +223,140 @@ class BoardThread(QThread):
                 raise RuntimeError("Supply voltage is 0 V; check the power adapter")
             time.sleep(0.1)
 
+    def _ready_fingers(self, config: DemoConfig) -> tuple[int, ...]:
+        return tuple(
+            finger
+            for finger, actuator in enumerate(config.actuators)
+            if self._actuator_states.get(actuator) is ActuatorState.READY
+        )
+
     def _detect_actuators_at_startup(self, board) -> None:
         try:
             self.phase_changed.emit("POWERING ON")
             board.power_on()
             self._check_voltage(board)
-            self.phase_changed.emit("CHECKING ACTUATORS")
-            states: dict[int, ActuatorState] = {}
+            self._actuator_states = {}
             for actuator in range(board.actuator_count):
                 if self._disconnect.is_set():
                     return
-                states[actuator] = board.detect(actuator)
-            self._actuator_states = states
+                self.phase_changed.emit(f"CHECKING ACTUATOR {actuator}")
+                self.detection_changed.emit(actuator, "Detecting")
+                try:
+                    state = board.detect(actuator)
+                except Exception:
+                    self._actuator_states[actuator] = ActuatorState.ERROR
+                    self.detection_changed.emit(actuator, ActuatorState.ERROR)
+                    raise
+                self._actuator_states[actuator] = state
+                self.detection_changed.emit(actuator, state)
         finally:
             self.phase_changed.emit("POWERING OFF")
             board.power_off()
 
-    def _run_wave(self, board, config: DemoConfig) -> None:
-        hold_s = 1.0 if config.pattern == "Slow Wave" else 0.25
-        finger = 0
-        while not self._stop.is_set():
+    def _run_wave(
+        self, board, config: DemoConfig, ready_fingers: tuple[int, ...]
+    ) -> None:
+        wave_fingers: list[int] = []
+        seen_actuators: set[int] = set()
+        for finger in ready_fingers:
             actuator = config.actuators[finger]
-            self.phase_changed.emit(f"{config.pattern.upper()} / {FINGER_NAMES[finger].upper()}")
-            driven = False
-            try:
-                board.set_actuator(actuator, 255)
-                driven = True
-                self.values_changed.emit({actuator: 255})
-                self._stop.wait(hold_s)
-            finally:
-                if driven:
-                    board.set_actuator(actuator, 0)
-                    self._wait_for_discharge(board, actuator)
-            finger = (finger + 1) % 5
+            if actuator not in seen_actuators:
+                wave_fingers.append(finger)
+                seen_actuators.add(actuator)
+        hold_s = 1.0 if config.pattern == "Slow Wave" else 0.25
+        step_s = hold_s * 0.75
+        active_until: dict[int, float] = {}
+        discharging_until: dict[int, float] = {}
+        driven_actuators: set[int] = set()
+        last_values: dict[int, int] = {}
+        next_start = time.monotonic()
+        position = 0
+        try:
+            while not self._stop.is_set() and not self._disconnect.is_set():
+                now = time.monotonic()
+                for actuator, deadline in tuple(discharging_until.items()):
+                    if now >= deadline:
+                        del discharging_until[actuator]
+                for actuator, deadline in tuple(active_until.items()):
+                    if now >= deadline:
+                        board.set_actuator(actuator, 0)
+                        del active_until[actuator]
+                        # Firmware discharges for approximately the preceding
+                        # active time. Keep this estimate out of the serial
+                        # command path; verify actual discharge on shutdown.
+                        discharging_until[actuator] = time.monotonic() + hold_s
 
-    def _wait_for_discharge(self, board, actuator: int) -> None:
-        self.phase_changed.emit(f"DISCHARGING / ACTUATOR {actuator}")
-        deadline = time.monotonic() + 15.0
-        while True:
-            status = board.status()
-            remaining_ms = status["discharge_ms_left"][actuator]
-            if remaining_ms <= 0:
+                now = time.monotonic()
+                if now >= next_start:
+                    finger = wave_fingers[position]
+                    actuator = config.actuators[finger]
+                    self.phase_changed.emit(
+                        f"{config.pattern.upper()} / {FINGER_NAMES[finger].upper()}"
+                    )
+                    # Repeated mappings cannot overlap independently on one
+                    # physical channel. Keep its current pulse bounded and
+                    # wait for discharge before retriggering it.
+                    if actuator not in active_until and actuator not in discharging_until:
+                        board.set_actuator(actuator, 255)
+                        active_until[actuator] = time.monotonic() + hold_s
+                        driven_actuators.add(actuator)
+                    position = (position + 1) % len(wave_fingers)
+                    next_start = time.monotonic() + step_s
+
+                values = {
+                    **dict.fromkeys(discharging_until, -255),
+                    **dict.fromkeys(active_until, 255),
+                }
+                if values != last_values:
+                    self.values_changed.emit(values)
+                    last_values = values
+
+                next_event = min(
+                    (next_start, *active_until.values(), *discharging_until.values())
+                )
+                self._stop.wait(max(0.0, next_event - time.monotonic()))
+        finally:
+            zero_error: Exception | None = None
+            for actuator in tuple(active_until):
+                try:
+                    board.set_actuator(actuator, 0)
+                except Exception as exc:
+                    zero_error = zero_error or exc
+            discharge_deadlines = {
+                actuator: time.monotonic() + 15.0 for actuator in driven_actuators
+            }
+            try:
+                while discharge_deadlines:
+                    self.phase_changed.emit("DISCHARGING / WAVE OUTPUTS")
+                    self.values_changed.emit(
+                        self._poll_wave_discharge(board, discharge_deadlines)
+                    )
+                    if discharge_deadlines:
+                        time.sleep(0.05)
+            finally:
                 self.values_changed.emit({})
-                return
-            outputs = status.get("manual_outputs", {})
-            if actuator in outputs:
-                positive, negative = outputs[actuator]
-                value = positive - negative
-            else:
-                # Older status implementations may omit OUT_VALUES.
-                value = -255
-            self.values_changed.emit({actuator: value} if value else {})
+            if zero_error is not None:
+                raise zero_error
+
+    @staticmethod
+    def _poll_wave_discharge(board, deadlines: dict[int, float]) -> dict[int, int]:
+        status = board.status()
+        remaining = status["discharge_ms_left"]
+        outputs = status.get("manual_outputs", {})
+        values: dict[int, int] = {}
+        for actuator, deadline in tuple(deadlines.items()):
+            if remaining[actuator] <= 0:
+                del deadlines[actuator]
+                continue
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"Actuator {actuator} did not finish discharging")
-            time.sleep(0.05)
+            if actuator in outputs:
+                positive, negative = outputs[actuator]
+                values[actuator] = positive - negative
+            else:
+                # Older status implementations may omit OUT_VALUES.
+                values[actuator] = -255
+        return values
 
     @staticmethod
     def _set_manual(board, actuator: int, channel: _Channel, value: int) -> None:
