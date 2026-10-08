@@ -159,8 +159,9 @@ def test_independent_processes_complete_with_reports(tmp_path: Path) -> None:
 def test_measurement_pauses_other_actuators_and_maps_polarity(tmp_path: Path) -> None:
     session, events, holder = make_session(tmp_path)
     try:
-        session.start_process(0, "A", QUICK.with_changes(pre_check=False, post_check=False))
-        session.start_process(1, "B", QUICK.with_changes(pre_check=False, post_check=False))
+        every = QUICK.with_changes(pre_check=False, post_check=False, measurement_mode="every_phase")
+        session.start_process(0, "A", every)
+        session.start_process(1, "B", every)
         wait_until(lambda: finished(session, (0, 1)))
         lines = [line for _, line in holder["transport"].writes]
         # Every current reading on one channel is surrounded by the other channel being zeroed and restored.
@@ -369,7 +370,9 @@ def test_failed_restore_fails_only_the_neighbour(tmp_path: Path) -> None:
 
     session, events, holder = make_session(tmp_path, speed=10.0, fail=fail)
     try:
-        config = QUICK.with_changes(pre_check=False, post_check=False, high_times_s=(3.0,))
+        # Every-phase mode: phase changes go through OUC, so the injected OUT failure hits the restore.
+        config = QUICK.with_changes(pre_check=False, post_check=False, high_times_s=(3.0,),
+                                    measurement_mode="every_phase")
         session.start_process(0, "A", config)
         session.start_process(1, "B", config.with_changes(pause_time_s=0.5))
         wait_until(lambda: 1 in session.processes and session.processes[1].output_value != 0, timeout=20)
@@ -435,3 +438,28 @@ def test_supply_rise_is_adopted_immediately(tmp_path: Path) -> None:
     session._observe_supply(150.0)  # a low reading at start never raises drive
     assert session._scale_supply_v() == pytest.approx(212.0)
     session._io.shutdown()
+
+
+def test_default_reads_after_first_and_last_cycle_only(tmp_path: Path) -> None:
+    config = QUICK.with_changes(num_cycles=4, pre_check=False, post_check=False)
+    plan = build_plan(config)
+    assert plan.measurement_count() == 2 * len(plan.runs)
+    session, events, holder = make_session(tmp_path)
+    try:
+        session.start_process(0, "A", config)
+        wait_until(lambda: finished(session, (0,)))
+        process = session.processes[0]
+        assert process.status == "completed"
+        readings = [(m.run_id, m.phase_kind, m.cycle, m.edge) for m in process.measurements]
+        expected = [(run.run_id, "high", cycle, "end") for run in plan.runs for cycle in (1, 4)]
+        assert readings == expected
+        assert all(m.target_v > 0 for m in process.measurements)
+        # Only two board-pausing reading events per run, plus the initial baseline.
+        oucs = [l for _, l in holder["transport"].writes if l.startswith("OUC 0 ") and not l.startswith("OUC 0 0 0")]
+        assert len(oucs) == 2 * len(plan.runs)
+        for record in process.phase_records:
+            if record.kind in ("high", "low"):
+                assert record.drive_s == pytest.approx(1.0, abs=0.15)
+    finally:
+        session.shutdown()
+        session.join(10)

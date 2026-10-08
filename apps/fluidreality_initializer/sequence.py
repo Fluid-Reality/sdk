@@ -28,6 +28,13 @@ PHASE_HIGH = "high"
 PHASE_LOW = "low"
 PHASE_RECOVERY = "recovery"
 
+MEASURE_FIRST_LAST = "first_last"  # after the first and the last cycle of each run
+MEASURE_EVERY_PHASE = "every_phase"  # at the start and end of every phase
+MEASUREMENT_MODES = {
+    MEASURE_FIRST_LAST: "After the first and last cycle of each run",
+    MEASURE_EVERY_PHASE: "At the start and end of every phase",
+}
+
 PHASE_LABELS = {
     PHASE_PAUSE: "Baseline pause",
     PHASE_PRE_HOLD: "Pre-hold",
@@ -49,9 +56,10 @@ class InitializationConfig:
     pause_time_s: float = 5.0
     low_mode: str = "negative"  # "negative" (low = -V) or "zero" (low = 0 V)
     pre_hold: bool = False  # hold -V for high_time instead of the leading pause
+    measurement_mode: str = MEASURE_FIRST_LAST
     measure_window_ms: int = 500  # OUC window for each start/end reading
     baseline_window_ms: int = 250  # OUC window for the all-off baseline
-    measure_zero_phases: bool = False  # also read current at 0 V phase edges
+    measure_zero_phases: bool = False  # every_phase mode: also read at 0 V phase edges
     pre_check: bool = True  # firmware DT0/DT1 detection before the sweep
     post_check: bool = True  # firmware DT0/DT1 detection after the sweep
     pass_max_delta_ma: float | None = None  # optional acceptance on final delta
@@ -99,6 +107,8 @@ class InitializationConfig:
             problems.append("Cycles must be at least 1.")
         if self.pause_time_s < 0:
             problems.append("Pause time cannot be negative.")
+        if self.measurement_mode not in MEASUREMENT_MODES:
+            problems.append("Unknown measurement mode.")
         if self.low_mode not in {"negative", "zero"}:
             problems.append("Low mode must be 'negative' or 'zero'.")
         if not 20 <= self.measure_window_ms <= 5000:
@@ -187,29 +197,48 @@ class SequencePlan:
     def drive_duration_s(self) -> float:
         return sum(phase.duration_s for phase in self.phases)
 
-    def measured(self, phase: Phase | None) -> bool:
+    def measure_end(self, phase: Phase | None) -> bool:
+        """Read current over the last window of this phase."""
+
         if phase is None:
+            return False
+        if self.config.measurement_mode == MEASURE_FIRST_LAST:
+            return phase.kind == PHASE_HIGH and phase.cycle in (1, phase.run.num_cycles)
+        return phase.target_v != 0 or self.config.measure_zero_phases
+
+    def measure_start(self, phase: Phase | None) -> bool:
+        """Read current over the first window of this phase."""
+
+        if phase is None or self.config.measurement_mode == MEASURE_FIRST_LAST:
             return False
         return phase.target_v != 0 or self.config.measure_zero_phases
 
-    def measurement_event_count(self) -> int:
-        """Boundary events that need a board pause (start of plan to end)."""
+    def _event_windows(self) -> list[int]:
+        """Reading windows per board-pausing event (the first event always baselines)."""
 
-        count = 0
+        windows: list[int] = []
         previous: Phase | None = None
         for phase in [*self.phases, None]:
-            if self.measured(previous) or self.measured(phase):
-                count += 1
+            readings = int(self.measure_end(previous)) + int(self.measure_start(phase))
+            if readings or previous is None:
+                windows.append(readings)
             previous = phase
-        return count
+        return windows
+
+    def measurement_event_count(self) -> int:
+        """Boundary events that pause the other actuators on the board."""
+
+        return len(self._event_windows())
 
     def measurement_count(self) -> int:
-        return 2 * sum(1 for phase in self.phases if self.measured(phase))
+        return sum(self._event_windows())
 
     def event_overhead_s(self) -> float:
         config = self.config
-        per_event = (2 * config.measure_window_ms + config.baseline_window_ms) / 1000.0 + 0.08
-        return per_event * self.measurement_event_count()
+        base = config.baseline_window_ms / 1000.0 + 0.08
+        # Reading windows are drive time of their phases; only the baseline and
+        # command latency add wall time.
+        return sum(base for _ in self._event_windows())
 
     def estimated_duration_s(self) -> float:
         checks = (3.5 if self.config.pre_check else 0.0) + (3.5 if self.config.post_check else 0.0)
@@ -271,6 +300,23 @@ def _append_run_phases(plan: SequencePlan, run: RunSpec, pause_time_s: float) ->
         add(PHASE_HIGH, run.voltage_v, run.high_time_s, cycle)
         add(PHASE_LOW, run.low_v, run.high_time_s, cycle)
     add(PHASE_RECOVERY, 0.0, pause_time_s)
+
+
+def reading_is_first(config: InitializationConfig, measurement: Any) -> bool:
+    """Hollow marker: 'after first cycle' (first/last mode) or 'phase start'."""
+
+    if config.measurement_mode == MEASURE_FIRST_LAST:
+        return measurement.cycle == 1 and config.num_cycles > 1
+    return measurement.edge == "start"
+
+
+def reading_labels(config: InitializationConfig) -> tuple[str, str, str]:
+    """(chart title, filled-marker label, hollow-marker label)."""
+
+    if config.measurement_mode == MEASURE_FIRST_LAST:
+        return ("Current delta after the first (○) and last (●) cycle of each run",
+                "after last cycle", "after first cycle")
+    return ("Current delta at phase start (○) and end (●)", "end of phase", "start of phase")
 
 
 def parse_number_list(text: str) -> tuple[float, ...]:

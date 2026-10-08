@@ -25,7 +25,14 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable, Sequence
 
-from .sequence import PHASE_HIGH, PHASE_LOW, format_duration
+from .sequence import (
+    MEASUREMENT_MODES,
+    PHASE_HIGH,
+    PHASE_LOW,
+    format_duration,
+    reading_is_first,
+    reading_labels,
+)
 
 SCHEMA = "fluid-reality/actuator-initialization-report"
 SCHEMA_VERSION = 1
@@ -417,12 +424,12 @@ def _delta_chart(process: Any, end_t: float) -> str:
         color = voltage_color(m.voltage_v, voltages)
         x, y = svg.sx(m.t_s), svg.sy(m.delta_ma)
         tip = html.escape(f"Run {m.run_id} · {m.voltage_v:g} V · high {m.high_time_s:g} s · {m.edge} of {m.phase_kind}"
-                          f" {m.cycle or ''} · Δ {m.delta_ma:.3f} mA at {_fmt_time(m.t_s)}")
-        if m.edge == "end":
+                          f" (cycle {m.cycle}) · Δ {m.delta_ma:.3f} mA at {_fmt_time(m.t_s)}")
+        if not reading_is_first(process.config, m):
             svg.parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{color}" class="dot"><title>{tip}</title></circle>')
         else:
             svg.parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="none" stroke="{color}" stroke-width="1.5" class="dot"><title>{tip}</title></circle>')
-    return svg.render("Current delta at phase start and end")
+    return svg.render(reading_labels(process.config)[0])
 
 
 def _run_chart(report: dict[str, Any], voltages: Sequence[float]) -> str:
@@ -543,6 +550,8 @@ def render_html(report: dict[str, Any], process: Any) -> str:
         for item in report["log"]
     )
     title = f"Initialization report · {process.actuator_id}"
+    delta_title, filled_label, hollow_label = reading_labels(config)
+    readings_text = (MEASUREMENT_MODES.get(config.measurement_mode, config.measurement_mode)).lower()
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)}</title>
@@ -581,7 +590,7 @@ dl{{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0}} d
 <div class="sub" style="margin-top:6px">{html.escape(report['status_detail'] or '')}</div></div></header>
 <section class="tiles">{tiles}</section>
 <section class="card"><h2>Drive voltage</h2><div class="legend"><span class="key"><i style="background:{POSITIVE}"></i>Positive</span><span class="key"><i style="background:{NEGATIVE}"></i>Negative</span></div>{_voltage_chart(process, end_t)}</section>
-<section class="card"><h2>Current delta at phase start and end</h2><div class="legend">{legend}<span class="key"><i class="filled"></i>End of phase</span><span class="key"><i class="hollow"></i>Start of phase</span></div>{_delta_chart(process, end_t)}</section>
+<section class="card"><h2>{html.escape(delta_title)}</h2><div class="legend">{legend}<span class="key"><i class="filled"></i>{html.escape(filled_label.capitalize())}</span><span class="key"><i class="hollow"></i>{html.escape(hollow_label.capitalize())}</span></div>{_delta_chart(process, end_t)}</section>
 <section class="card"><h2>Conditioning by run</h2><div class="legend">{legend}</div>{_run_chart(report, config.voltages_v)}</section>
 <section class="card"><h2>Mean end-of-high delta (mA) by voltage and high time</h2>{_heatmap(report, config)}</section>
 <section class="card"><h2>By voltage</h2><table><thead><tr><th>Voltage</th><th>Runs</th><th>First run Δ (mA)</th><th>Last run Δ (mA)</th><th>Mean Δ (mA)</th><th>Change</th></tr></thead><tbody>{by_voltage_rows}</tbody></table></section>
@@ -591,7 +600,7 @@ dl{{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0}} d
 <dt>Finished</dt><dd>{html.escape(str(summary['finished_at']))}</dd><dt>Operator</dt><dd>{html.escape(str(summary['operator'] or '-'))}</dd>
 <dt>Board</dt><dd>{html.escape(str(report['board']['label']))} · {html.escape(str(report['board']['firmware']))} · {html.escape(str(report['board']['bluetooth_name'] or report['board']['endpoint']))}</dd>
 <dt>Sequence</dt><dd>voltages {', '.join(f'{v:g}' for v in config.voltages_v)} V · high times {', '.join(f'{v:g}' for v in config.high_times_s)} s · {config.repeats} repeats · {config.num_cycles} cycles · pause {config.pause_time_s:g} s · low {config.low_mode}{' · pre-hold' if config.pre_hold else ''}</dd>
-<dt>Measurement</dt><dd>{config.measure_window_ms} ms reading windows · {config.baseline_window_ms} ms baseline · other actuators on the board held at 0 V while measuring</dd>
+<dt>Measurement</dt><dd>readings {html.escape(readings_text)} · {config.measure_window_ms} ms reading windows · {config.baseline_window_ms} ms baseline · other actuators on the board held at 0 V while measuring</dd>
 <dt>Notes</dt><dd>{html.escape(process.notes or '-')}</dd></dl></section>
 <section class="card"><details><summary>Event log ({len(report['log'])})</summary><div class="scroll"><table><tbody>{log_rows}</tbody></table></div></details></section>
 </main></body></html>

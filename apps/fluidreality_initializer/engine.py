@@ -216,7 +216,7 @@ class ActuatorProcess:
 
     def end_window_s(self) -> float:
         phase = self.phase
-        if phase is None or not self.plan.measured(phase):
+        if phase is None or not self.plan.measure_end(phase):
             return 0.0
         return self.window_s(phase, self.config.measure_window_ms)
 
@@ -915,9 +915,9 @@ class BoardSession(threading.Thread):
     # ===================================================== boundary measurement
     def _boundary_event(self, process: ActuatorProcess, *, old: Phase | None, new: Phase | None) -> None:
         plan = process.plan
-        measure_end = plan.measured(old)
-        measure_start = plan.measured(new) or old is None  # always baseline at start
-        if not measure_end and not measure_start:
+        measure_end = plan.measure_end(old)
+        measure_start = plan.measure_start(new)
+        if not measure_end and not measure_start and old is not None:  # always baseline at start
             self._tick(self.clock.now())
             closed = self._close_open_phase(process, completed=True)
             if closed is not None:
@@ -957,7 +957,7 @@ class BoardSession(threading.Thread):
             self._begin_phase(process, new)
             if new is not None:
                 value = self._dac_value(new.target_v)
-                if plan.measured(new):
+                if measure_start:
                     window_s = process.window_s(new, config.measure_window_ms)
                     current, elapsed = self._ouc(board, process, value, window_s)
                     self._accrue(process, elapsed)

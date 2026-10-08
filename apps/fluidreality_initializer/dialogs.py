@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
 
 from .plots import TimeAxis
 from .sequence import (
+    MEASURE_EVERY_PHASE,
+    MEASUREMENT_MODES,
     InitializationConfig,
     build_plan,
     format_duration,
@@ -167,6 +169,11 @@ class SequenceDialog(QDialog):
         self.baseline_ms = QSpinBox()
         self.baseline_ms.setRange(20, 5000)
         self.baseline_ms.setSuffix(" ms")
+        self.measurement_mode = QComboBox()
+        for key, label in MEASUREMENT_MODES.items():
+            self.measurement_mode.addItem(label, key)
+        self.measurement_mode.setToolTip(
+            "Each reading holds the other actuators on this board at 0 V for about a second.")
         self.measure_zero = QCheckBox("Also read at 0 V phase edges")
         self.pre_check = QCheckBox("Firmware check before (DT0/DT1)")
         self.post_check = QCheckBox("Firmware check after (DT0/DT1)")
@@ -176,17 +183,19 @@ class SequenceDialog(QDialog):
         self.threshold.setDecimals(2)
         self.threshold.setSuffix(" mA")
         self.use_threshold.toggled.connect(self.threshold.setEnabled)
-        mgrid.addWidget(_form_label("Reading window"), 0, 0)
-        mgrid.addWidget(self.window_ms, 0, 1)
-        mgrid.addWidget(_form_label("Baseline window"), 0, 2)
-        mgrid.addWidget(self.baseline_ms, 0, 3)
-        mgrid.addWidget(self.pre_check, 1, 0, 1, 2)
-        mgrid.addWidget(self.post_check, 1, 2, 1, 2)
-        mgrid.addWidget(self.measure_zero, 2, 0, 1, 2)
+        mgrid.addWidget(_form_label("Readings"), 0, 0)
+        mgrid.addWidget(self.measurement_mode, 0, 1, 1, 3)
+        mgrid.addWidget(_form_label("Reading window"), 1, 0)
+        mgrid.addWidget(self.window_ms, 1, 1)
+        mgrid.addWidget(_form_label("Baseline window"), 1, 2)
+        mgrid.addWidget(self.baseline_ms, 1, 3)
+        mgrid.addWidget(self.pre_check, 2, 0, 1, 2)
+        mgrid.addWidget(self.post_check, 2, 2, 1, 2)
+        mgrid.addWidget(self.measure_zero, 3, 0, 1, 2)
         threshold_row = QHBoxLayout()
         threshold_row.addWidget(self.use_threshold)
         threshold_row.addWidget(self.threshold)
-        mgrid.addLayout(threshold_row, 2, 2, 1, 2)
+        mgrid.addLayout(threshold_row, 3, 2, 1, 2)
         left.addWidget(measurement)
         left.addStretch()
 
@@ -250,6 +259,7 @@ class SequenceDialog(QDialog):
         self.pause.valueChanged.connect(self._changed)
         self.threshold.valueChanged.connect(self._changed)
         self.low_mode.currentIndexChanged.connect(self._changed)
+        self.measurement_mode.currentIndexChanged.connect(self._changed)
         for widget in (self.pre_hold, self.measure_zero, self.pre_check, self.post_check, self.use_threshold):
             widget.toggled.connect(self._changed)
 
@@ -273,6 +283,9 @@ class SequenceDialog(QDialog):
         self.window_ms.setValue(config.measure_window_ms)
         self.baseline_ms.setValue(config.baseline_window_ms)
         self.measure_zero.setChecked(config.measure_zero_phases)
+        index = self.measurement_mode.findData(config.measurement_mode)
+        self.measurement_mode.setCurrentIndex(max(0, index))
+        self.measure_zero.setEnabled(config.measurement_mode == MEASURE_EVERY_PHASE)
         self.pre_check.setChecked(config.pre_check)
         self.post_check.setChecked(config.post_check)
         self.use_threshold.setChecked(config.pass_max_delta_ma is not None)
@@ -307,6 +320,7 @@ class SequenceDialog(QDialog):
             pre_hold=self.pre_hold.isChecked(),
             measure_window_ms=self.window_ms.value(),
             baseline_window_ms=self.baseline_ms.value(),
+            measurement_mode=self.measurement_mode.currentData(),
             measure_zero_phases=self.measure_zero.isChecked(),
             pre_check=self.pre_check.isChecked(),
             post_check=self.post_check.isChecked(),
@@ -336,13 +350,16 @@ class SequenceDialog(QDialog):
             self.start_button.setEnabled(False)
             return
         self.error.hide()
+        self.measure_zero.setEnabled(config.measurement_mode == MEASURE_EVERY_PHASE)
         self.save_button.setEnabled(True)
         self.start_button.setEnabled(self._can_start)
         forward, reverse = plan.volt_seconds()
         self.tile_time.set(format_duration(plan.estimated_duration_s()),
                            f"{format_duration(plan.drive_duration_s)} drive + readings")
         self.tile_runs.set(str(len(plan.runs)), f"{len(plan.phases)} phases")
-        self.tile_readings.set(str(plan.measurement_count()), f"{plan.measurement_event_count()} pauses of the other actuators")
+        per_run = plan.measurement_count() / max(1, len(plan.runs))
+        self.tile_readings.set(str(plan.measurement_count()),
+                               f"{per_run:g} per run · {plan.measurement_event_count()} pauses of the others")
         self.tile_exposure.set(f"{forward / 1000:.1f} kV·s", f"forward · reverse {reverse / 1000:.1f} kV·s")
         self._draw_preview(plan)
 

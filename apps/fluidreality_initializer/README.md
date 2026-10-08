@@ -72,14 +72,19 @@ and Square Wave tools:
 ### Current measurement and "control blocking"
 
 Rockford has one current sensor for the whole board, so a reading is only
-meaningful while a single actuator is driven. Current is therefore read only at
-phase boundaries, and while one actuator is being read every other actuator on
-that board is held at 0 V with its phase clock frozen:
+meaningful while a single actuator is driven. By default current is read
+**twice per run**: at the end of the +V phase of the **first cycle** and of the
+**last cycle** (one reading if the run has a single cycle). The **Readings**
+setting can switch to the original behaviour, a reading at the start and end
+of every phase.
+
+While one actuator is being read, every other actuator on that board is held at
+0 V with its phase clock frozen:
 
 1. other actuators → 0 V (clocks frozen)
-2. `OUC` at the end of the old phase (counts as the old phase's drive time)
+2. `OUC` over the last window of the +V phase (counts as that phase's drive time)
 3. `OUC` all-off baseline (default 250 ms)
-4. `OUC` at the start of the new phase (counts as the new phase's drive time)
+4. the next phase's output is applied (in every-phase mode, `OUC` over its first window)
 5. other actuators restored
 
 The reported delta is `current − baseline`. One thread per board issues every
@@ -108,7 +113,7 @@ Each actuator run gets a folder `YYYY-MM-DD/<actuator>_<board>_ch<n>_<time>/`:
 |---|---|
 | `report.json` | Machine-readable report (autosaved every 2 minutes while running) |
 | `report.html` | Self-contained visual report with charts |
-| `measurements.csv` | Every start/end reading, appended live |
+| `measurements.csv` | Every current reading, appended live |
 | `phases.csv` | Every phase with drive time, held time and deltas, appended live |
 | `config.json` | The exact sequence used (loadable back into the app) |
 

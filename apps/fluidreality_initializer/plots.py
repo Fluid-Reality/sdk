@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .reporting import voltage_color
+from .sequence import reading_is_first, reading_labels
 from .ui_style import GRID, INK_2, MUTED, NEGATIVE, POSITIVE
 from .widgets import legend_key
 
@@ -123,11 +124,12 @@ class LivePlots(QWidget):
         self.runs_plot.addItem(self.run_bars)
 
         for heading, widget in (("Drive voltage", self.voltage_widget),
-                                ("Current delta at phase start (○) and end (●)", self.delta_widget)):
+                                ("Current delta readings", self.delta_widget)):
             label = QLabel(heading)
             label.setObjectName("ChartTitle")
             layout.addWidget(label)
             if widget is self.delta_widget:
+                self.delta_title = label
                 layout.addWidget(legend_host)
             layout.addWidget(widget, 3)
         runs_label = QLabel("Conditioning by run")
@@ -174,8 +176,10 @@ class LivePlots(QWidget):
         for voltage in voltages:
             self.legend_row.addWidget(legend_key(f"{voltage:g} V", voltage_color(voltage, voltages)))
         if voltages:
-            self.legend_row.addWidget(legend_key("end of phase", INK_2))
-            self.legend_row.addWidget(legend_key("start of phase", INK_2, hollow=True))
+            title, filled, hollow = reading_labels(model.config)
+            self.delta_title.setText(title)
+            self.legend_row.addWidget(legend_key(filled, INK_2))
+            self.legend_row.addWidget(legend_key(hollow, INK_2, hollow=True))
         self.legend_row.addStretch()
 
     def refresh(self, force: bool = False) -> None:
@@ -230,14 +234,14 @@ class LivePlots(QWidget):
         ends, starts, lows = [], [], []
         for m in model.measurements:
             tip = (f"{format_clock(m.t_s)} · run {m.run_id} · {m.voltage_v:g} V · high {m.high_time_s:g} s\n"
-                   f"{m.edge} of {m.phase_kind} {m.cycle or ''} @ {m.applied_v:+.0f} V\n"
+                   f"{m.edge} of {m.phase_kind} {'' if m.cycle is None else f'(cycle {m.cycle})'} @ {m.applied_v:+.0f} V\n"
                    f"Δ {m.delta_ma:.3f} mA  (I {m.current_ma:.3f}, base {m.baseline_ma:.3f})")
             spot = {"pos": (m.t_s, m.delta_ma), "data": {"tip": tip}}
             if m.target_v <= 0:
                 lows.append(spot)
                 continue
             color = voltage_color(m.voltage_v, voltages)
-            if m.edge == "end":
+            if not reading_is_first(model.config, m):
                 spot["brush"] = pg.mkBrush(color)
                 ends.append(spot)
             else:
